@@ -49,6 +49,28 @@ const History = ({ transactions, filters }) => {
     });
     const [isConfirming, setIsConfirming] = useState(false);
 
+    // Modal ubah status
+    const [statusModal, setStatusModal] = useState({ open: false, transaction: null });
+    const [isUpdatingStatus, setIsUpdatingStatus] = useState(false);
+    const [selectedStatus, setSelectedStatus] = useState("");
+
+    const handleUpdateStatus = () => {
+        if (!selectedStatus || !statusModal.transaction) return;
+        setIsUpdatingStatus(true);
+        router.patch(
+            route("transactions.update-status", statusModal.transaction.id),
+            { payment_status: selectedStatus },
+            {
+                onSuccess: () => {
+                    setStatusModal({ open: false, transaction: null });
+                    setSelectedStatus("");
+                    setIsUpdatingStatus(false);
+                },
+                onError: () => setIsUpdatingStatus(false),
+            }
+        );
+    };
+
     useEffect(() => {
         setFilterData({
             ...defaultFilters,
@@ -242,6 +264,9 @@ const History = ({ transactions, filters }) => {
                                             Total
                                         </th>
                                         <th className="px-4 py-4 text-center text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
+                                            Metode
+                                        </th>
+                                        <th className="px-4 py-4 text-center text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
                                             Status
                                         </th>
                                         <th className="px-4 py-4 text-center text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
@@ -290,39 +315,72 @@ const History = ({ transactions, filters }) => {
                                                 )}
                                             </td>
                                             <td className="px-4 py-4 text-center">
-                                                {transaction.payment_method ===
-                                                    "pay_later" &&
-                                                transaction.payment_status !==
-                                                    "paid" ? (
-                                                    <span className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400 rounded-full">
-                                                        Piutang
-                                                    </span>
-                                                ) : transaction.payment_status ===
-                                                  "paid" ? (
-                                                    <span className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium bg-success-100 dark:bg-success-900/30 text-success-700 dark:text-success-400 rounded-full">
-                                                        <IconCheck size={12} />
-                                                        Lunas
-                                                    </span>
-                                                ) : transaction.payment_status ===
-                                                      "pending" &&
-                                                  canConfirmPayment ? (
-                                                    <button
-                                                        onClick={() =>
-                                                            setConfirmModal({
-                                                                open: true,
-                                                                transaction,
-                                                            })
+                                                {(() => {
+                                                    const method = transaction.payment_method ?? "cash";
+                                                    const map = {
+                                                        cash:         { label: "Tunai",        color: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400" },
+                                                        bank_transfer:{ label: "Transfer Bank", color: "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400" },
+                                                        qris_static:  { label: "QRIS",          color: "bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-400" },
+                                                        doku:         { label: "DOKU QRIS",     color: "bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-400" },
+                                                        flip:         { label: "Flip.id",       color: "bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-400" },
+                                                        midtrans:     { label: "Midtrans",      color: "bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400" },
+                                                        xendit:       { label: "Xendit",        color: "bg-pink-100 text-pink-700 dark:bg-pink-900/30 dark:text-pink-400" },
+                                                        pay_later:    { label: "Piutang",       color: "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400" },
+                                                        dual_cash_qris: { label: "Tunai+QRIS",  color: "bg-teal-100 text-teal-700 dark:bg-teal-900/30 dark:text-teal-400" },
+                                                    };
+                                                    const m = map[method] ?? { label: method.replace(/_/g, " "), color: "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400" };
+                                                    return (
+                                                        <div className="flex flex-col items-center gap-1">
+                                                            <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold ${m.color}`}>
+                                                                {m.label}
+                                                            </span>
+                                                            {/* Breakdown khusus Cash+QRIS */}
+                                                            {method === "dual_cash_qris" && (
+                                                                <div className="text-[10px] text-slate-500 dark:text-slate-400 space-y-0.5 text-left">
+                                                                    <div className="flex items-center gap-1">
+                                                                        <span className="text-emerald-600 dark:text-emerald-400 font-semibold"></span>
+                                                                        <span>Cash: <span className="font-semibold text-slate-700 dark:text-slate-300">{formatCurrency(transaction.dual_cash ?? 0)}</span></span>
+                                                                    </div>
+                                                                    <div className="flex items-center gap-1">
+                                                                        <span className="text-violet-600 dark:text-violet-400 font-semibold"></span>
+                                                                        <span>QRIS: <span className="font-semibold text-slate-700 dark:text-slate-300">{formatCurrency(transaction.dual_qris ?? 0)}</span></span>
+                                                                    </div>
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                    );
+                                                })()}
+                                            </td>
+                                            <td className="px-4 py-4 text-center">
+                                                <div className="flex flex-col items-center gap-1">
+                                                    {(() => {
+                                                        const s = transaction.payment_status;
+                                                        if (transaction.payment_method === "pay_later" && s !== "paid") {
+                                                            return <span className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400 rounded-full">Piutang</span>;
+                                                        } else if (s === "paid") {
+                                                            return <span className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium bg-success-100 dark:bg-success-900/30 text-success-700 dark:text-success-400 rounded-full"><IconCheck size={12} />Lunas</span>;
+                                                        } else if (s === "pending") {
+                                                            return <span className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium bg-warning-100 dark:bg-warning-900/30 text-warning-700 dark:text-warning-400 rounded-full">Pending</span>;
+                                                        } else if (s === "failed") {
+                                                            return <span className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium bg-danger-100 dark:bg-danger-900/30 text-danger-700 dark:text-danger-400 rounded-full">Gagal</span>;
+                                                        } else if (s === "expired") {
+                                                            return <span className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 rounded-full">Kedaluwarsa</span>;
+                                                        } else {
+                                                            return <span className="inline-flex items-center px-2 py-1 text-xs font-medium bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 rounded-full">{s ?? "-"}</span>;
                                                         }
-                                                        className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium bg-warning-100 dark:bg-warning-900/30 text-warning-700 dark:text-warning-400 rounded-full hover:bg-warning-200 dark:hover:bg-warning-900/50 transition-colors"
-                                                    >
-                                                        Pending - Konfirmasi
-                                                    </button>
-                                                ) : (
-                                                    <span className="inline-flex items-center px-2 py-1 text-xs font-medium bg-danger-100 dark:bg-danger-900/30 text-danger-700 dark:text-danger-400 rounded-full">
-                                                        {transaction.payment_status ??
-                                                            "-"}
-                                                    </span>
-                                                )}
+                                                    })()}
+                                                    {canConfirmPayment && (
+                                                        <button
+                                                            onClick={() => {
+                                                                setSelectedStatus(transaction.payment_status ?? "pending");
+                                                                setStatusModal({ open: true, transaction });
+                                                            }}
+                                                            className="text-[10px] text-slate-400 hover:text-primary-500 dark:hover:text-primary-400 underline underline-offset-2 transition-colors"
+                                                        >
+                                                            Ubah Status
+                                                        </button>
+                                                    )}
+                                                </div>
                                             </td>
                                             <td className="px-4 py-4">
                                                 <div className="flex items-center justify-center gap-2">
@@ -430,24 +488,25 @@ const History = ({ transactions, filters }) => {
                                                         Lunas
                                                     </span>
                                                 ) : transaction.payment_status ===
-                                                      "pending" &&
-                                                  canConfirmPayment ? (
-                                                    <button
-                                                        onClick={() =>
-                                                            setConfirmModal({
-                                                                open: true,
-                                                                transaction,
-                                                            })
-                                                        }
-                                                        className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium bg-warning-100 dark:bg-warning-900/30 text-warning-700 dark:text-warning-400 rounded-full"
-                                                    >
+                                                  "pending" ? (
+                                                    <span className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium bg-warning-100 dark:bg-warning-900/30 text-warning-700 dark:text-warning-400 rounded-full">
                                                         Pending
-                                                    </button>
+                                                    </span>
                                                 ) : (
                                                     <span className="inline-flex items-center px-2 py-1 text-xs font-medium bg-danger-100 dark:bg-danger-900/30 text-danger-700 dark:text-danger-400 rounded-full">
-                                                        {transaction.payment_status ??
-                                                            "-"}
+                                                        {transaction.payment_status ?? "-"}
                                                     </span>
+                                                )}
+                                                {canConfirmPayment && (
+                                                    <button
+                                                        onClick={() => {
+                                                            setSelectedStatus(transaction.payment_status ?? "pending");
+                                                            setStatusModal({ open: true, transaction });
+                                                        }}
+                                                        className="text-[10px] text-slate-400 hover:text-primary-500 underline"
+                                                    >
+                                                        Ubah Status
+                                                    </button>
                                                 )}
                                             </div>
                                             <p className="text-sm font-semibold text-slate-900 dark:text-white">
@@ -489,10 +548,17 @@ const History = ({ transactions, filters }) => {
                                             <p className="text-xs text-slate-500 dark:text-slate-400">
                                                 Pembayaran
                                             </p>
-                                            <p className="font-medium capitalize">
-                                                {transaction.payment_method?.replace("_", " ") ??
-                                                    "-"}
-                                            </p>
+                                            {transaction.payment_method === "dual_cash_qris" ? (
+                                                <div className="space-y-0.5 text-right">
+                                                    <p className="font-semibold text-teal-600 dark:text-teal-400 text-xs">Cash+QRIS</p>
+                                                    <p className="text-[10px] text-slate-500">💵 {formatCurrency(transaction.dual_cash ?? 0)}</p>
+                                                    <p className="text-[10px] text-slate-500">📱 {formatCurrency(transaction.dual_qris ?? 0)}</p>
+                                                </div>
+                                            ) : (
+                                                <p className="font-medium capitalize">
+                                                    {transaction.payment_method?.replace("_", " ") ?? "-"}
+                                                </p>
+                                            )}
                                         </div>
                                     </div>
 
@@ -734,6 +800,88 @@ const History = ({ transactions, filters }) => {
                                         <IconCheck size={18} />
                                         Konfirmasi Lunas
                                     </>
+                                )}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* ===== MODAL UBAH STATUS ===== */}
+            {statusModal.open && statusModal.transaction && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+                    <div
+                        className="absolute inset-0 bg-black/50 backdrop-blur-sm"
+                        onClick={() => !isUpdatingStatus && setStatusModal({ open: false, transaction: null })}
+                    />
+                    <div className="relative bg-white dark:bg-slate-900 rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden">
+                        {/* Header */}
+                        <div className="bg-gradient-to-r from-slate-700 to-slate-800 px-6 py-5 text-white">
+                            <h3 className="text-lg font-bold">Ubah Status Pembayaran</h3>
+                            <p className="text-sm opacity-80">{statusModal.transaction.invoice}</p>
+                        </div>
+                        {/* Content */}
+                        <div className="p-6 space-y-4">
+                            <div className="bg-slate-50 dark:bg-slate-800 rounded-xl p-4 space-y-1">
+                                <div className="flex justify-between text-sm">
+                                    <span className="text-slate-500">Pelanggan</span>
+                                    <span className="font-medium text-slate-800 dark:text-white">{statusModal.transaction.customer?.name ?? "Umum"}</span>
+                                </div>
+                                <div className="flex justify-between text-sm">
+                                    <span className="text-slate-500">Total</span>
+                                    <span className="font-bold text-slate-800 dark:text-white">{formatCurrency(statusModal.transaction.grand_total ?? 0)}</span>
+                                </div>
+                                <div className="flex justify-between text-sm">
+                                    <span className="text-slate-500">Metode</span>
+                                    <span className="font-medium text-slate-800 dark:text-white">{statusModal.transaction.payment_method ?? "-"}</span>
+                                </div>
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
+                                    Pilih Status Baru
+                                </label>
+                                <div className="grid grid-cols-2 gap-2">
+                                    {[
+                                        { value: "paid",    label: "✅ Lunas",        color: "bg-success-50 border-success-300 text-success-700 dark:bg-success-950/30 dark:border-success-700 dark:text-success-400" },
+                                        { value: "pending", label: "⏳ Pending",       color: "bg-warning-50 border-warning-300 text-warning-700 dark:bg-warning-950/30 dark:border-warning-700 dark:text-warning-400" },
+                                        { value: "failed",  label: "❌ Gagal",         color: "bg-danger-50 border-danger-300 text-danger-700 dark:bg-danger-950/30 dark:border-danger-700 dark:text-danger-400" },
+                                        { value: "expired", label: "🕐 Kedaluwarsa",   color: "bg-slate-50 border-slate-300 text-slate-700 dark:bg-slate-800 dark:border-slate-600 dark:text-slate-400" },
+                                        { value: "unpaid",  label: "🔴 Belum Lunas",   color: "bg-amber-50 border-amber-300 text-amber-700 dark:bg-amber-950/30 dark:border-amber-700 dark:text-amber-400" },
+                                        { value: "partial", label: "🟡 Parsial",       color: "bg-blue-50 border-blue-300 text-blue-700 dark:bg-blue-950/30 dark:border-blue-700 dark:text-blue-400" },
+                                    ].map((s) => (
+                                        <button
+                                            key={s.value}
+                                            onClick={() => setSelectedStatus(s.value)}
+                                            className={`px-3 py-2.5 rounded-xl border-2 text-xs font-semibold transition-all ${
+                                                selectedStatus === s.value
+                                                    ? s.color + " ring-2 ring-offset-1 ring-current scale-105"
+                                                    : "border-slate-200 dark:border-slate-700 text-slate-500 hover:border-slate-300"
+                                            }`}
+                                        >
+                                            {s.label}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+                        </div>
+                        {/* Actions */}
+                        <div className="px-6 pb-6 flex gap-3">
+                            <button
+                                onClick={() => setStatusModal({ open: false, transaction: null })}
+                                disabled={isUpdatingStatus}
+                                className="flex-1 px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 font-medium hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors disabled:opacity-50"
+                            >
+                                Batal
+                            </button>
+                            <button
+                                onClick={handleUpdateStatus}
+                                disabled={isUpdatingStatus || !selectedStatus}
+                                className="flex-1 px-4 py-3 rounded-xl bg-slate-800 hover:bg-slate-900 dark:bg-slate-700 dark:hover:bg-slate-600 text-white font-medium transition-colors disabled:opacity-50 flex items-center justify-center gap-2"
+                            >
+                                {isUpdatingStatus ? (
+                                    <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                                ) : (
+                                    <><IconCheck size={16} /> Simpan Status</>
                                 )}
                             </button>
                         </div>

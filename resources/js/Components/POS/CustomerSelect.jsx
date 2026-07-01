@@ -29,12 +29,18 @@ export default function CustomerSelect({
     const inputRef = useRef(null);
 
     // Filter customers by search
-    const filteredCustomers = customers.filter(
-        (customer) =>
-            customer.name.toLowerCase().includes(search.toLowerCase()) ||
-            customer.no_telp?.toLowerCase().includes(search.toLowerCase()) ||
-            customer.member_code?.toLowerCase().includes(search.toLowerCase())
-    );
+    const filteredCustomers = customers.filter((customer) => {
+        const q = search.toLowerCase();
+        const name = String(customer.name ?? "").toLowerCase();
+        const noTelp = String(customer.no_telp ?? "").toLowerCase();
+        const memberCode = String(customer.member_code ?? "").toLowerCase();
+
+        return (
+            name.includes(q) ||
+            noTelp.includes(q) ||
+            memberCode.includes(q)
+        );
+    });
 
     // Close on click outside
     useEffect(() => {

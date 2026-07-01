@@ -1,6 +1,6 @@
 import DashboardLayout from "@/Layouts/DashboardLayout";
-import { Head, Link } from "@inertiajs/react";
-import { useEffect, useMemo, useRef } from "react";
+import { Head, Link, router } from "@inertiajs/react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Chart from "chart.js/auto";
 import {
     IconBox,
@@ -20,6 +20,7 @@ import {
     IconTarget,
     IconMapPin,
     IconWallet,
+    IconCalendar,
 } from "@tabler/icons-react";
 
 const formatCurrency = (value = 0) =>
@@ -185,6 +186,9 @@ function ListCard({ title, subtitle, icon: Icon, children, emptyMessage }) {
 }
 
 export default function Dashboard({
+    period = "today",
+    startDate,
+    endDate,
     totalCategories,
     totalProducts,
     totalTransactions,
@@ -210,6 +214,33 @@ export default function Dashboard({
     const chartInstance = useRef(null);
 
     const chartData = useMemo(() => revenueTrend ?? [], [revenueTrend]);
+
+    const PERIODS = [
+        { value: "today", label: "Hari Ini" },
+        { value: "week",  label: "Minggu Ini" },
+        { value: "month", label: "Bulan Ini" },
+        { value: "year",  label: "Tahun Ini" },
+        { value: "custom",label: "Kustom" },
+    ];
+
+    const [activePeriod, setActivePeriod] = useState(period);
+    const [customStart, setCustomStart]   = useState(startDate ?? "");
+    const [customEnd, setCustomEnd]       = useState(endDate ?? "");
+    const [showCustom, setShowCustom]     = useState(period === "custom");
+
+    const applyFilter = (p, cs, ce) => {
+        const params = { period: p };
+        if (p === "custom" && cs && ce) { params.start_date = cs; params.end_date = ce; }
+        router.get(route("dashboard"), params, { preserveScroll: true, preserveState: false });
+    };
+
+    const handlePeriod = (p) => {
+        setActivePeriod(p);
+        setShowCustom(p === "custom");
+        if (p !== "custom") applyFilter(p);
+    };
+
+    const periodLabel = PERIODS.find(p => p.value === period)?.label ?? "Hari Ini";
 
     // Setup chart
     useEffect(() => {
@@ -307,35 +338,89 @@ export default function Dashboard({
 
             <div className="space-y-6">
                 {/* Header */}
-                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-                    <div>
-                        <h1 className="text-2xl font-bold text-slate-900 dark:text-white">
-                            Dashboard
-                        </h1>
-                        <p className="text-sm text-slate-500 dark:text-slate-400">
-                            Ringkasan aktivitas bisnis Anda
-                        </p>
+                <div className="flex flex-col gap-4">
+                    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                        <div>
+                            <h1 className="text-2xl font-bold text-slate-900 dark:text-white">
+                                Dashboard
+                            </h1>
+                            <p className="text-sm text-slate-500 dark:text-slate-400">
+                                Data: <span className="font-semibold text-primary-600 dark:text-primary-400">{periodLabel}</span>
+                                {period === "custom" && startDate && endDate && (
+                                    <span className="ml-1 text-slate-400">({startDate} s/d {endDate})</span>
+                                )}
+                            </p>
+                        </div>
+                        <Link
+                            href={route("transactions.index")}
+                            className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-primary-500 hover:bg-primary-600 text-white text-sm font-medium transition-colors shadow-lg shadow-primary-500/30"
+                        >
+                            <IconShoppingCart size={18} />
+                            <span>Transaksi Baru</span>
+                        </Link>
                     </div>
-                    <Link
-                        href={route("transactions.index")}
-                        className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-primary-500 hover:bg-primary-600 text-white text-sm font-medium transition-colors shadow-lg shadow-primary-500/30"
-                    >
-                        <IconShoppingCart size={18} />
-                        <span>Transaksi Baru</span>
-                    </Link>
+
+                    {/* Filter Periode */}
+                    <div className="flex flex-wrap gap-2">
+                        {PERIODS.map(p => (
+                            <button
+                                key={p.value}
+                                onClick={() => handlePeriod(p.value)}
+                                className={`px-4 py-2 rounded-xl text-sm font-medium transition-all ${
+                                    activePeriod === p.value
+                                        ? "bg-primary-500 text-white shadow-md shadow-primary-500/30"
+                                        : "bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:border-primary-300 dark:hover:border-primary-700"
+                                }`}
+                            >
+                                {p.label}
+                            </button>
+                        ))}
+                    </div>
+
+                    {/* Custom Date Range */}
+                    {showCustom && (
+                        <div className="flex flex-wrap items-center gap-3 p-4 rounded-2xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
+                            <IconCalendar size={16} className="text-slate-400" />
+                            <div className="flex items-center gap-2">
+                                <label className="text-xs text-slate-500">Dari</label>
+                                <input
+                                    type="date"
+                                    value={customStart}
+                                    onChange={e => setCustomStart(e.target.value)}
+                                    className="h-9 px-3 rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-900 text-sm text-slate-700 dark:text-slate-200"
+                                />
+                            </div>
+                            <div className="flex items-center gap-2">
+                                <label className="text-xs text-slate-500">Sampai</label>
+                                <input
+                                    type="date"
+                                    value={customEnd}
+                                    onChange={e => setCustomEnd(e.target.value)}
+                                    className="h-9 px-3 rounded-lg border border-slate-200 dark:border-slate-600 bg-white dark:bg-slate-900 text-sm text-slate-700 dark:text-slate-200"
+                                />
+                            </div>
+                            <button
+                                onClick={() => applyFilter("custom", customStart, customEnd)}
+                                disabled={!customStart || !customEnd}
+                                className="px-4 py-2 rounded-lg bg-primary-500 hover:bg-primary-600 text-white text-sm font-medium disabled:opacity-50 transition-colors"
+                            >
+                                Terapkan
+                            </button>
+                        </div>
+                    )}
                 </div>
 
                 {/* Main Stat Cards - Reorganized */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                     <StatCard
-                        title="Penjualan Hari Ini"
+                        title={`Penjualan ${periodLabel}`}
                         value={formatCurrency(todaySales)}
                         subtitle="Total penjualan hari ini"
                         icon={IconCoin}
                         gradient="from-primary-500 to-primary-700"
                     />
                     <StatCard
-                        title="Profit Hari Ini"
+                        title={`Profit ${periodLabel}`}
                         value={formatCurrency(todayProfit)}
                         subtitle="Profit bersih hari ini"
                         icon={IconTrendingUp}
@@ -349,7 +434,7 @@ export default function Dashboard({
                         icon={IconTarget}
                     />
                     <StatCard
-                        title="Transaksi Hari Ini"
+                        title={`Transaksi ${periodLabel}`}
                         value={todayTransactions}
                         subtitle="Transaksi"
                         icon={IconClock}
@@ -384,7 +469,7 @@ export default function Dashboard({
                 {/* Revenue Chart - Full Width */}
                 <ListCard
                     title="Tren Pendapatan"
-                    subtitle="12 data terakhir"
+                    subtitle={periodLabel}
                     icon={IconChartBar}
                     emptyMessage="Belum ada data pendapatan"
                 >

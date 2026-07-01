@@ -33,9 +33,9 @@ class Category extends Model
         return $this->hasMany(Product::class);
     }
 
-    public function pricingRules()
+    public function promos()
     {
-        return $this->hasMany(PricingRule::class);
+        return $this->hasMany(Promo::class);
     }
 
     /**

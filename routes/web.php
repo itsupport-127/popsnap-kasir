@@ -7,11 +7,10 @@ use App\Http\Controllers\Apps\CrmCampaignController;
 use App\Http\Controllers\Apps\CrmReminderController;
 use App\Http\Controllers\Apps\CustomerController;
 use App\Http\Controllers\Apps\CustomerSegmentController;
-use App\Http\Controllers\Apps\CustomerVoucherController;
 use App\Http\Controllers\Apps\GoodsReceivingController;
 use App\Http\Controllers\Apps\MemberController;
 use App\Http\Controllers\Apps\PaymentSettingController;
-use App\Http\Controllers\Apps\PricingRuleController;
+use App\Http\Controllers\Apps\PromoController;
 use App\Http\Controllers\Apps\ProductController;
 use App\Http\Controllers\Apps\PurchaseOrderController;
 use App\Http\Controllers\Apps\SalesReturnController;
@@ -84,15 +83,16 @@ Route::group(['prefix' => 'dashboard', 'middleware' => ['auth', 'verified']], fu
         ->middlewareFor(['create', 'store'], 'permission:products-create')
         ->middlewareFor(['edit', 'update'], 'permission:products-edit')
         ->middlewareFor('destroy', 'permission:products-delete');
-    Route::resource('pricing-rules', PricingRuleController::class)
+    Route::post('products/{product}/adjust-stock', [ProductController::class, 'adjustStock'])->middleware('permission:products-edit')->name('products.adjust-stock');
+    Route::resource('promos', PromoController::class)
         ->except(['show'])
-        ->middlewareFor('index', 'permission:pricing-rules-access')
-        ->middlewareFor(['create', 'store'], 'permission:pricing-rules-create')
-        ->middlewareFor(['edit', 'update'], 'permission:pricing-rules-update')
-        ->middlewareFor('destroy', 'permission:pricing-rules-delete');
-    Route::post('pricing-rules/preview', [PricingRuleController::class, 'preview'])
-        ->middleware('permission:pricing-rules-access')
-        ->name('pricing-rules.preview');
+        ->middlewareFor('index', 'permission:promos-access')
+        ->middlewareFor(['create', 'store'], 'permission:promos-create')
+        ->middlewareFor(['edit', 'update'], 'permission:promos-update')
+        ->middlewareFor('destroy', 'permission:promos-delete');
+    Route::post('promos/preview', [PromoController::class, 'preview'])
+        ->middleware('permission:promos-access')
+        ->name('promos.preview');
     Route::get('stock-opnames', [StockOpnameController::class, 'index'])->middleware('permission:stock-opnames-access')->name('stock-opnames.index');
     Route::get('stock-opnames/create', [StockOpnameController::class, 'create'])->middleware('permission:stock-opnames-create')->name('stock-opnames.create');
     Route::post('stock-opnames', [StockOpnameController::class, 'store'])->middleware('permission:stock-opnames-create')->name('stock-opnames.store');
@@ -119,12 +119,6 @@ Route::group(['prefix' => 'dashboard', 'middleware' => ['auth', 'verified']], fu
         ->middlewareFor(['index', 'show'], 'permission:customers-access')
         ->middlewareFor(['create', 'store'], 'permission:customers-create')
         ->middlewareFor(['edit', 'update'], 'permission:customers-edit');
-    Route::resource('customer-vouchers', CustomerVoucherController::class)
-        ->except(['show'])
-        ->middlewareFor('index', 'permission:customer-vouchers-access')
-        ->middlewareFor(['create', 'store'], 'permission:customer-vouchers-create')
-        ->middlewareFor(['edit', 'update'], 'permission:customer-vouchers-update')
-        ->middlewareFor('destroy', 'permission:customer-vouchers-delete');
     Route::resource('customer-segments', CustomerSegmentController::class)
         ->middlewareFor(['index', 'show'], 'permission:customer-segments-access')
         ->middlewareFor(['create', 'store'], 'permission:customer-segments-create')
@@ -182,9 +176,11 @@ Route::group(['prefix' => 'dashboard', 'middleware' => ['auth', 'verified']], fu
     // route transaction updateCart
     Route::patch('/transactions/{cart_id}/updateCart', [TransactionController::class, 'updateCart'])->middleware(['permission:transactions-access', 'active_shift'])->name('transactions.updateCart');
     Route::post('/transactions/pricing-preview', [TransactionController::class, 'previewPricing'])->middleware(['permission:transactions-access', 'active_shift'])->name('transactions.pricing-preview');
+    Route::post('/transactions/lookup-voucher-code', [TransactionController::class, 'lookupVoucherByCode'])->middleware(['permission:transactions-access', 'active_shift'])->name('transactions.lookup-voucher-code');
 
     // route hold transaction
     Route::post('/transactions/hold', [TransactionController::class, 'holdCart'])->middleware(['permission:transactions-access', 'active_shift'])->name('transactions.hold');
+    Route::post('/transactions/cart/set-customer', [TransactionController::class, 'setCartCustomer'])->middleware(['permission:transactions-access', 'active_shift'])->name('transactions.cart.set-customer');
     Route::post('/transactions/{holdId}/resume', [TransactionController::class, 'resumeCart'])->middleware(['permission:transactions-access', 'active_shift'])->name('transactions.resume');
     Route::delete('/transactions/{holdId}/clearHold', [TransactionController::class, 'clearHold'])->middleware(['permission:transactions-access', 'active_shift'])->name('transactions.clearHold');
     Route::get('/transactions/held', [TransactionController::class, 'getHeldCarts'])->middleware(['permission:transactions-access', 'active_shift'])->name('transactions.held');
@@ -244,6 +240,8 @@ Route::group(['prefix' => 'dashboard', 'middleware' => ['auth', 'verified']], fu
     // pdf documents
     Route::get('/documents/transactions/{invoice}/pdf/invoice', [\App\Http\Controllers\DocumentController::class, 'invoice'])->middleware('permission:transactions-access')->name('pdf.transactions.invoice');
     Route::get('/documents/transactions/{invoice}/pdf/receipt/{size?}', [\App\Http\Controllers\DocumentController::class, 'receipt'])->middleware('permission:transactions-access')->name('pdf.transactions.receipt');
+    Route::get('/documents/transactions/{invoice}/receipt-html/{size?}', [\App\Http\Controllers\DocumentController::class, 'receiptHtml'])->middleware('permission:transactions-access')->name('documents.transactions.receipt-html');
+    Route::get('/documents/transactions/{invoice}/receipt-raw/{size?}', [\App\Http\Controllers\DocumentController::class, 'receiptRaw'])->middleware('permission:transactions-access')->name('documents.transactions.receipt-raw');
     Route::get('/documents/transactions/{invoice}/pdf/shipping', [\App\Http\Controllers\DocumentController::class, 'shipping'])->middleware('permission:transactions-access')->name('pdf.transactions.shipping');
     Route::get('/documents/receivables/{receivable}/pdf', [\App\Http\Controllers\DocumentController::class, 'receivable'])->middleware('permission:receivables-access')->name('pdf.receivables.show');
     Route::get('/documents/payables/{payable}/pdf', [\App\Http\Controllers\DocumentController::class, 'payable'])->middleware('permission:payables-access')->name('pdf.payables.show');
@@ -271,6 +269,7 @@ Route::group(['prefix' => 'dashboard', 'middleware' => ['auth', 'verified']], fu
 
     // confirm payment for bank transfer
     Route::patch('/transactions/{transaction}/confirm-payment', [TransactionController::class, 'confirmPayment'])->middleware(['permission:transactions-confirm-payment', 'step_up'])->name('transactions.confirm-payment');
+    Route::patch('/transactions/{transaction}/update-status', [TransactionController::class, 'updateStatus'])->middleware(['permission:transactions-confirm-payment', 'step_up'])->name('transactions.update-status');
 
     // reports
     Route::get('/reports/sales', [SalesReportController::class, 'index'])->middleware('permission:reports-access')->name('reports.sales.index');
@@ -283,6 +282,16 @@ Route::group(['prefix' => 'dashboard', 'middleware' => ['auth', 'verified']], fu
     Route::get('/profile', [ProfileController::class, 'edit'])->name('profile.edit');
     Route::patch('/profile', [ProfileController::class, 'update'])->name('profile.update');
     Route::delete('/profile', [ProfileController::class, 'destroy'])->name('profile.destroy');
+
 });
+
+// CSRF token refresh — untuk cegah token mismatch saat session lama
+Route::get('/csrf-token', function() {
+    return response()->json(['token' => csrf_token()]);
+})->name('csrf.token');
+
+// QZ Tray — di luar auth group, CSRF dinonaktifkan karena QZ Tray tidak bisa kirim CSRF token
+Route::get('/qz/certificate', [\App\Http\Controllers\QzCertController::class, 'certificate'])->name('qz.certificate');
+Route::post('/qz/sign', [\App\Http\Controllers\QzCertController::class, 'sign'])->withoutMiddleware([\Illuminate\Foundation\Http\Middleware\VerifyCsrfToken::class])->name('qz.sign');
 
 require __DIR__.'/auth.php';

@@ -7,9 +7,8 @@ use App\Models\Customer;
 use App\Models\CustomerCampaign;
 use App\Models\CustomerCampaignLog;
 use App\Models\CustomerSegment;
-use App\Models\CustomerVoucher;
+use App\Models\Promo;
 use App\Models\LoyaltyPointHistory;
-use App\Models\PricingRule;
 use App\Models\Product;
 use App\Models\Transaction;
 use App\Models\User;
@@ -275,34 +274,36 @@ class AdvancedSalesInsightsTest extends TestCase
         ]);
         $product = $this->createProduct($category, 'Promo Product', 'PRM-001', 10_000, 20_000, 10);
 
-        PricingRule::create([
+        Promo::create([
             'name' => 'Active Promo',
-            'kind' => PricingRule::KIND_STANDARD_DISCOUNT,
+            'discount_kind' => Promo::KIND_STANDARD_DISCOUNT,
+            'activation_mode' => Promo::ACTIVATION_AUTO,
             'is_active' => true,
             'priority' => 100,
-            'target_type' => PricingRule::TARGET_PRODUCT,
+            'target_type' => Promo::TARGET_PRODUCT,
             'product_id' => $product->id,
-            'customer_scope' => PricingRule::SCOPE_ALL,
-            'discount_type' => PricingRule::TYPE_PERCENTAGE,
+            'customer_scope' => Promo::SCOPE_ALL,
+            'discount_type' => Promo::TYPE_PERCENTAGE,
             'discount_value' => 10,
         ]);
 
-        PricingRule::create([
+        Promo::create([
             'name' => 'Scheduled Promo',
-            'kind' => PricingRule::KIND_BUNDLE_PRICE,
+            'discount_kind' => Promo::KIND_BUNDLE_PRICE,
+            'activation_mode' => Promo::ACTIVATION_AUTO,
             'is_active' => true,
             'priority' => 80,
-            'target_type' => PricingRule::TARGET_CATEGORY,
+            'target_type' => Promo::TARGET_CATEGORY,
             'category_id' => $category->id,
-            'customer_scope' => PricingRule::SCOPE_MEMBER,
-            'discount_type' => PricingRule::TYPE_FIXED_PRICE,
+            'customer_scope' => Promo::SCOPE_MEMBER,
+            'discount_type' => Promo::TYPE_FIXED_PRICE,
             'discount_value' => 50_000,
             'starts_at' => now()->addDays(2),
         ]);
 
         \App\Models\AuditLog::create([
-            'event' => 'pricing_rule.created',
-            'module' => 'pricing_rules',
+            'event' => 'promo.created',
+            'module' => 'promos',
             'description' => 'Rule promo dibuat.',
             'created_at' => now(),
         ]);
@@ -323,24 +324,32 @@ class AdvancedSalesInsightsTest extends TestCase
             'amount_delta' => 10_000,
         ]);
 
-        CustomerVoucher::create([
+        Promo::create([
             'customer_id' => $member->id,
+            'activation_mode' => Promo::ACTIVATION_MANUAL,
+            'discount_kind' => Promo::KIND_STANDARD_DISCOUNT,
             'code' => 'VC-ACTIVE',
             'name' => 'Voucher Aktif',
-            'discount_type' => CustomerVoucher::TYPE_FIXED_AMOUNT,
+            'discount_type' => Promo::TYPE_FIXED_AMOUNT,
             'discount_value' => 10_000,
             'minimum_order' => 50_000,
+            'target_type' => Promo::TARGET_ALL,
+            'customer_scope' => Promo::SCOPE_ALL,
             'is_active' => true,
             'is_used' => false,
         ]);
 
-        CustomerVoucher::create([
+        Promo::create([
             'customer_id' => $member->id,
+            'activation_mode' => Promo::ACTIVATION_MANUAL,
+            'discount_kind' => Promo::KIND_STANDARD_DISCOUNT,
             'code' => 'VC-USED',
             'name' => 'Voucher Used',
-            'discount_type' => CustomerVoucher::TYPE_FIXED_AMOUNT,
+            'discount_type' => Promo::TYPE_FIXED_AMOUNT,
             'discount_value' => 10_000,
             'minimum_order' => 50_000,
+            'target_type' => Promo::TARGET_ALL,
+            'customer_scope' => Promo::SCOPE_ALL,
             'is_active' => true,
             'is_used' => true,
             'used_at' => now(),

@@ -55,14 +55,23 @@ export default function ThermalReceipt({
     const shipping = transaction?.shipping_cost || 0;
     const cash = transaction?.cash || 0;
     const change = transaction?.change || 0;
+    const isDualPayment = transaction?.payment_method === 'dual_cash_qris';
+    const dualCash = transaction?.dual_cash || 0;
+    const dualQris = transaction?.dual_qris || 0;
 
     const paymentLabels = {
         cash: "TUNAI",
         midtrans: "MIDTRANS",
         xendit: "XENDIT",
+        qris_static: "QRIS",
+        doku: "DOKU QRIS",
+        flip: "FLIP",
+        bank_transfer: "TRANSFER BANK",
+        dual_cash_qris: "TUNAI+QRIS",
     };
-    const paymentMethod =
-        paymentLabels[transaction?.payment_method?.toLowerCase()] || "TUNAI";
+    const paymentMethod = isDualPayment
+        ? "TUNAI+QRIS"
+        : paymentLabels[transaction?.payment_method?.toLowerCase()] || "TUNAI";
 
     // Line separator
     const line = "=".repeat(32);
@@ -211,15 +220,36 @@ export default function ThermalReceipt({
 
             {/* Payment Info */}
             <div className="my-1">
-                <div className="flex justify-between">
-                    <span>Bayar ({paymentMethod})</span>
-                    <span>{formatPrice(cash)}</span>
-                </div>
-                {change > 0 && (
-                    <div className="flex justify-between font-bold">
-                        <span>Kembali</span>
-                        <span>{formatPrice(change)}</span>
-                    </div>
+                {isDualPayment ? (
+                    <>
+                        <div className="flex justify-between">
+                            <span>Bayar Tunai</span>
+                            <span>{formatPrice(dualCash)}</span>
+                        </div>
+                        <div className="flex justify-between">
+                            <span>Bayar QRIS</span>
+                            <span>{formatPrice(dualQris)}</span>
+                        </div>
+                        {change > 0 && (
+                            <div className="flex justify-between font-bold">
+                                <span>Kembali</span>
+                                <span>{formatPrice(change)}</span>
+                            </div>
+                        )}
+                    </>
+                ) : (
+                    <>
+                        <div className="flex justify-between">
+                            <span>Bayar ({paymentMethod})</span>
+                            <span>{formatPrice(cash)}</span>
+                        </div>
+                        {change > 0 && (
+                            <div className="flex justify-between font-bold">
+                                <span>Kembali</span>
+                                <span>{formatPrice(change)}</span>
+                            </div>
+                        )}
+                    </>
                 )}
             </div>
 
@@ -254,53 +284,64 @@ export default function ThermalReceipt({
 }
 
 /**
- * Compact Receipt for 58mm printers
+ * Compact Receipt for 58mm printers — sama isi dengan 80mm
  */
 export function ThermalReceipt58mm({
     transaction,
     storeName = "TOKO",
+    storeAddress = "",
     storePhone = "",
     storeEmail = "",
     storeWebsite = "",
 }) {
-    const formatPrice = (price = 0) => {
-        return "Rp" + Number(price || 0).toLocaleString("id-ID");
-    };
+    const formatPrice = (price = 0) =>
+        "Rp " + Number(price || 0).toLocaleString("id-ID");
 
-    const formatTime = (value) => {
-        return new Date(value).toLocaleString("id-ID", {
-            day: "2-digit",
-            month: "2-digit",
-            hour: "2-digit",
-            minute: "2-digit",
+    const formatDate = (value) =>
+        new Date(value).toLocaleString("id-ID", {
+            day: "2-digit", month: "2-digit", year: "numeric",
+            hour: "2-digit", minute: "2-digit",
         });
-    };
 
     const items = transaction?.details ?? [];
-    const promoDiscount = items.reduce(
-        (sum, item) => sum + Number(item.discount_total || 0),
-        0
-    );
+    const isDualPayment = transaction?.payment_method === "dual_cash_qris";
+    const dualCash = transaction?.dual_cash || 0;
+    const dualQris = transaction?.dual_qris || 0;
+    const paymentLabels = {
+        cash: "TUNAI", bank_transfer: "TRANSFER", qris_static: "QRIS",
+        dual_cash_qris: "TUNAI+QRIS", pay_later: "PIUTANG",
+        midtrans: "MIDTRANS", xendit: "XENDIT", doku: "DOKU", flip: "FLIP",
+    };
+    const paymentMethod = isDualPayment
+        ? "TUNAI+QRIS"
+        : paymentLabels[transaction?.payment_method?.toLowerCase()] || "TUNAI";
+
+    const promoDiscount = items.reduce((sum, item) => sum + Number(item.discount_total || 0), 0);
     const loyaltyDiscount = Number(transaction?.loyalty_discount_total || 0);
-    const voucherDiscount = Number(
-        transaction?.customer_voucher_discount || 0
-    );
-    const line = "-".repeat(24);
+    const voucherDiscount = Number(transaction?.customer_voucher_discount || 0);
+    const subtotal =
+        (transaction?.grand_total || 0) +
+        (transaction?.discount || 0) -
+        (transaction?.shipping_cost || 0) +
+        promoDiscount + loyaltyDiscount + voucherDiscount;
+    const discount  = transaction?.discount || 0;
+    const total     = transaction?.grand_total || 0;
+    const shipping  = transaction?.shipping_cost || 0;
+    const cash      = transaction?.cash || 0;
+    const change    = transaction?.change || 0;
+
+    const line     = "=".repeat(24);
+    const dashLine = "-".repeat(24);
 
     const SimpleBarcode = ({ value }) => {
         const bars = (value || "").split("").map((char, idx) => {
             const weight = (char.charCodeAt(0) + idx * 17) % 4;
             return 2 + weight;
         });
-
         return (
             <div className="flex items-end gap-[2px] mt-2 justify-center">
                 {bars.map((w, i) => (
-                    <span
-                        key={i}
-                        style={{ width: `${w}px` }}
-                        className="h-8 bg-black block"
-                    />
+                    <span key={i} style={{ width: `${w}px` }} className="h-8 bg-black block" />
                 ))}
             </div>
         );
@@ -308,108 +349,158 @@ export function ThermalReceipt58mm({
 
     return (
         <div
-            className="thermal-receipt-58 font-mono text-xs"
+            className="thermal-receipt-58 font-mono text-xs leading-tight"
             style={{ width: "58mm", padding: "2mm" }}
         >
-            <div className="text-center">
+            {/* Store Header */}
+            <div className="text-center mb-2">
                 <p className="font-bold">{storeName}</p>
-                {storePhone && <p>{storePhone}</p>}
+                {storeAddress && <p className="text-[10px]">{storeAddress}</p>}
+                {storePhone && <p>Telp: {storePhone}</p>}
                 {storeEmail && <p className="text-[10px]">{storeEmail}</p>}
                 {storeWebsite && <p className="text-[10px]">{storeWebsite}</p>}
             </div>
 
-            <pre>{line}</pre>
-            <p>#{transaction?.invoice}</p>
-            <p>{formatTime(transaction?.created_at)}</p>
-            <pre>{line}</pre>
+            <pre className="whitespace-pre-wrap">{line}</pre>
 
-            {items.map((item, i) => {
-                const qty = Number(item.qty) || 1;
-                const unitPrice =
-                    Number(item.unit_price || 0) ||
-                    Number(item.price || 0) / qty;
-                const baseUnitPrice =
-                    Number(item.base_unit_price || 0) || unitPrice;
+            {/* Invoice Info */}
+            <div className="my-1">
+                <div className="flex justify-between">
+                    <span>No:</span>
+                    <span>{transaction?.invoice}</span>
+                </div>
+                <div className="flex justify-between">
+                    <span>Tgl:</span>
+                    <span>{formatDate(transaction?.created_at)}</span>
+                </div>
+                <div className="flex justify-between">
+                    <span>Kasir:</span>
+                    <span>{transaction?.cashier?.name || "-"}</span>
+                </div>
+                <div className="flex justify-between">
+                    <span>Pelanggan:</span>
+                    <span>{transaction?.customer?.name || "Umum"}</span>
+                </div>
+            </div>
 
-                return (
-                    <div key={i} className="mb-1">
-                        <p className="truncate">{item.product?.title}</p>
-                        {Number(item.discount_total || 0) > 0 &&
-                            baseUnitPrice > unitPrice && (
-                                <div className="flex justify-between text-[9px] text-slate-500">
+            <pre className="whitespace-pre-wrap">{line}</pre>
+
+            {/* Items */}
+            <div className="my-1">
+                {items.map((item, index) => {
+                    const qty = Number(item.qty) || 1;
+                    const itemTotal = Number(item.price) || 0;
+                    const unitPrice = Number(item.unit_price || 0) || itemTotal / qty;
+                    const baseUnitPrice = Number(item.base_unit_price || 0) || unitPrice;
+                    return (
+                        <div key={item.id || index} className="mb-1">
+                            <p className="truncate">{item.product?.title}</p>
+                            {Number(item.discount_total || 0) > 0 && baseUnitPrice > unitPrice && (
+                                <div className="flex justify-between text-[9px]">
                                     <span>Promo</span>
                                     <span>{formatPrice(baseUnitPrice)}</span>
                                 </div>
                             )}
-                        <div className="flex justify-between">
-                            <span>
-                                {item.qty}x @ {formatPrice(unitPrice)}
-                            </span>
-                            <span>{formatPrice(item.price)}</span>
+                            <div className="flex justify-between">
+                                <span>{qty}x @ {formatPrice(unitPrice)}</span>
+                                <span>{formatPrice(itemTotal)}</span>
+                            </div>
                         </div>
-                    </div>
-                );
-            })}
+                    );
+                })}
+            </div>
 
-            <pre>{line}</pre>
-            <div className="flex justify-between">
-                <span>Subtotal</span>
-                <span>
-                    {formatPrice(
-                        (transaction?.grand_total || 0) +
-                            (transaction?.discount || 0) -
-                            (transaction?.shipping_cost || 0) +
-                            promoDiscount +
-                            loyaltyDiscount +
-                            voucherDiscount
-                    )}
-                </span>
+            <pre className="whitespace-pre-wrap">{dashLine}</pre>
+
+            {/* Totals */}
+            <div className="my-1">
+                <div className="flex justify-between">
+                    <span>Subtotal</span>
+                    <span>{formatPrice(subtotal)}</span>
+                </div>
+                {promoDiscount > 0 && (
+                    <div className="flex justify-between">
+                        <span>Promo</span>
+                        <span>-{formatPrice(promoDiscount)}</span>
+                    </div>
+                )}
+                {discount > 0 && (
+                    <div className="flex justify-between">
+                        <span>Diskon</span>
+                        <span>-{formatPrice(discount)}</span>
+                    </div>
+                )}
+                {voucherDiscount > 0 && (
+                    <div className="flex justify-between">
+                        <span>Voucher</span>
+                        <span>-{formatPrice(voucherDiscount)}</span>
+                    </div>
+                )}
+                {loyaltyDiscount > 0 && (
+                    <div className="flex justify-between">
+                        <span>Redeem Poin</span>
+                        <span>-{formatPrice(loyaltyDiscount)}</span>
+                    </div>
+                )}
+                {shipping > 0 && (
+                    <div className="flex justify-between">
+                        <span>Ongkir</span>
+                        <span>{formatPrice(shipping)}</span>
+                    </div>
+                )}
+                <div className="flex justify-between font-bold">
+                    <span>TOTAL</span>
+                    <span>{formatPrice(total)}</span>
+                </div>
             </div>
-            {promoDiscount > 0 && (
-                <div className="flex justify-between">
-                    <span>Promo</span>
-                    <span>-{formatPrice(promoDiscount)}</span>
-                </div>
-            )}
-            {Number(transaction?.discount || 0) > 0 && (
-                <div className="flex justify-between">
-                    <span>Disc</span>
-                    <span>-{formatPrice(transaction?.discount)}</span>
-                </div>
-            )}
-            {voucherDiscount > 0 && (
-                <div className="flex justify-between">
-                    <span>Voucher</span>
-                    <span>-{formatPrice(voucherDiscount)}</span>
-                </div>
-            )}
-            {loyaltyDiscount > 0 && (
-                <div className="flex justify-between">
-                    <span>Poin</span>
-                    <span>-{formatPrice(loyaltyDiscount)}</span>
-                </div>
-            )}
-            {Number(transaction?.shipping_cost || 0) > 0 && (
-                <div className="flex justify-between">
-                    <span>Ongkir</span>
-                    <span>{formatPrice(transaction?.shipping_cost)}</span>
-                </div>
-            )}
-            <div className="flex justify-between font-bold">
-                <span>TOTAL</span>
-                <span>{formatPrice(transaction?.grand_total)}</span>
+
+            <pre className="whitespace-pre-wrap">{dashLine}</pre>
+
+            {/* Payment */}
+            <div className="my-1">
+                {isDualPayment ? (
+                    <>
+                        <div className="flex justify-between">
+                            <span>Bayar Tunai</span>
+                            <span>{formatPrice(dualCash)}</span>
+                        </div>
+                        <div className="flex justify-between">
+                            <span>Bayar QRIS</span>
+                            <span>{formatPrice(dualQris)}</span>
+                        </div>
+                        {change > 0 && (
+                            <div className="flex justify-between font-bold">
+                                <span>Kembali</span>
+                                <span>{formatPrice(change)}</span>
+                            </div>
+                        )}
+                    </>
+                ) : (
+                    <>
+                        <div className="flex justify-between">
+                            <span>Bayar ({paymentMethod})</span>
+                            <span>{formatPrice(cash)}</span>
+                        </div>
+                        {change > 0 && (
+                            <div className="flex justify-between font-bold">
+                                <span>Kembali</span>
+                                <span>{formatPrice(change)}</span>
+                            </div>
+                        )}
+                    </>
+                )}
             </div>
-            <div className="flex justify-between">
-                <span>Bayar</span>
-                <span>{formatPrice(transaction?.cash)}</span>
+
+            <pre className="whitespace-pre-wrap">{line}</pre>
+
+            {/* Footer */}
+            <div className="text-center mt-2">
+                <p>Terima kasih</p>
+                <p>Barang yang sudah dibeli</p>
+                <p>tidak dapat ditukar/dikembalikan</p>
+                <p className="mt-1">#{transaction?.invoice}</p>
+                <SimpleBarcode value={transaction?.invoice} />
             </div>
-            <div className="flex justify-between">
-                <span>Kembali</span>
-                <span>{formatPrice(transaction?.change)}</span>
-            </div>
-            <pre>{line}</pre>
-            <p className="text-center">Terima kasih!</p>
-            <SimpleBarcode value={transaction?.invoice} />
 
             <style>{`
                 @media print {

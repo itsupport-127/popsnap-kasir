@@ -175,7 +175,7 @@ export default function Index({
                         </div>
                         <div className="rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
                             <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
-                                Expected Cash
+                                Ekspektasi Kas
                             </p>
                             <p className="mt-2 text-lg font-semibold text-slate-900 dark:text-white">
                                 {formatCurrency(activeShift.expected_cash)}
@@ -244,7 +244,7 @@ export default function Index({
                                 <Table.Th>Status</Table.Th>
                                 <Table.Th>Buka</Table.Th>
                                 <Table.Th>Tutup</Table.Th>
-                                <Table.Th>Expected Cash</Table.Th>
+                                <Table.Th>Ekspektasi Kas</Table.Th>
                                 <Table.Th>Selisih</Table.Th>
                                 <Table.Th className="w-24 text-center">Aksi</Table.Th>
                             </tr>

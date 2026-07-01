@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import DashboardLayout from "@/Layouts/DashboardLayout";
-import { Head, useForm, usePage, Link } from "@inertiajs/react";
+import { Head, useForm, usePage, Link, router } from "@inertiajs/react";
 import Input from "@/Components/Dashboard/Input";
 import Textarea from "@/Components/Dashboard/TextArea";
 import InputSelect from "@/Components/Dashboard/InputSelect";
@@ -12,6 +12,11 @@ import {
     IconPhoto,
     IconBarcode,
     IconCurrencyDollar,
+    IconPlus,
+    IconMinus,
+    IconX,
+    IconAlertTriangle,
+    IconHistory,
 } from "@tabler/icons-react";
 import { getProductImageUrl } from "@/Utils/imageUrl";
 
@@ -31,6 +36,39 @@ export default function Edit({ categories, product }) {
     });
 
     const [selectedCategory, setSelectedCategory] = useState(null);
+    const [stockModal, setStockModal] = useState({ open: false, type: "in" });
+    const [stockQty, setStockQty] = useState("");
+    const [stockNotes, setStockNotes] = useState("");
+    const [stockReasons] = useState([
+        "Restock dari supplier", "Bonus dari supplier", "Koreksi stok",
+        "Barang rusak", "Barang hilang/menyusut", "Sampel/tester", "Lainnya",
+    ]);
+    const [isAdjusting, setIsAdjusting] = useState(false);
+
+    const handleAdjustStock = () => {
+        if (!stockQty || Number(stockQty) <= 0) {
+            alert("Isi jumlah stok yang valid");
+            return;
+        }
+        setIsAdjusting(true);
+        router.post(
+            route("products.adjust-stock", product.id),
+            {
+                type: stockModal.type,
+                qty: Number(stockQty),
+                notes: stockNotes,
+            },
+            {
+                onSuccess: () => {
+                    setStockModal({ open: false, type: "in" });
+                    setStockQty("");
+                    setStockNotes("");
+                    setIsAdjusting(false);
+                },
+                onError: () => setIsAdjusting(false),
+            }
+        );
+    };
     const [imagePreview, setImagePreview] = useState(
         product.image ? getProductImageUrl(product.image) : null
     );
@@ -215,16 +253,40 @@ export default function Edit({ categories, product }) {
                                 />
                             </div>
 
-                            <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 dark:border-slate-700 dark:bg-slate-800">
-                                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
-                                    Stok Saat Ini
+                            <div className="mt-4 rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 dark:border-slate-700 dark:bg-slate-800 space-y-3">
+                                <div className="flex items-center justify-between">
+                                    <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                                        Stok Saat Ini
+                                    </p>
+                                    <Link
+                                        href={route("stock-mutations.index", { product_id: product.id })}
+                                        className="inline-flex items-center gap-1 text-xs text-primary-600 dark:text-primary-400 hover:underline"
+                                    >
+                                        <IconHistory size={12} />
+                                        Riwayat
+                                    </Link>
+                                </div>
+                                <p className="text-2xl font-bold text-slate-900 dark:text-slate-100">
+                                    {product.stock} <span className="text-sm font-normal text-slate-400">pcs</span>
                                 </p>
-                                <p className="mt-1 text-lg font-bold text-slate-900 dark:text-slate-100">
-                                    {product.stock}
-                                </p>
-                                <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-                                    Perubahan stok dilakukan melalui transaksi atau stock opname.
-                                </p>
+                                <div className="flex gap-2">
+                                    <button
+                                        type="button"
+                                        onClick={() => setStockModal({ open: true, type: "in" })}
+                                        className="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg bg-emerald-100 hover:bg-emerald-200 dark:bg-emerald-900/30 dark:hover:bg-emerald-900/50 text-emerald-700 dark:text-emerald-400 text-sm font-medium transition-colors"
+                                    >
+                                        <IconPlus size={14} />
+                                        Tambah Stok
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => setStockModal({ open: true, type: "out" })}
+                                        className="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg bg-rose-100 hover:bg-rose-200 dark:bg-rose-900/30 dark:hover:bg-rose-900/50 text-rose-700 dark:text-rose-400 text-sm font-medium transition-colors"
+                                    >
+                                        <IconMinus size={14} />
+                                        Kurangi Stok
+                                    </button>
+                                </div>
                             </div>
 
                             {/* Profit Estimation */}
@@ -283,6 +345,144 @@ export default function Edit({ categories, product }) {
                     </div>
                 </div>
             </form>
+            {/* ===== MODAL TAMBAH/KURANGI STOK ===== */}
+            {stockModal.open && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+                    <div
+                        className="absolute inset-0 bg-black/50 backdrop-blur-sm"
+                        onClick={() => !isAdjusting && setStockModal({ open: false, type: "in" })}
+                    />
+                    <div className="relative bg-white dark:bg-slate-900 rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden">
+                        {/* Header */}
+                        <div className={`px-6 py-5 text-white ${stockModal.type === "in" ? "bg-gradient-to-r from-emerald-600 to-emerald-700" : "bg-gradient-to-r from-rose-600 to-rose-700"}`}>
+                            <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-2">
+                                    {stockModal.type === "in"
+                                        ? <IconPlus size={20} />
+                                        : <IconMinus size={20} />
+                                    }
+                                    <h3 className="text-lg font-bold">
+                                        {stockModal.type === "in" ? "Tambah Stok" : "Kurangi Stok"}
+                                    </h3>
+                                </div>
+                                <button onClick={() => setStockModal({ open: false, type: "in" })} disabled={isAdjusting}>
+                                    <IconX size={20} className="opacity-80 hover:opacity-100" />
+                                </button>
+                            </div>
+                            <p className="text-sm opacity-80 mt-1">{product.title}</p>
+                        </div>
+
+                        {/* Content */}
+                        <div className="p-6 space-y-4">
+                            {/* Current stock info */}
+                            <div className="flex items-center justify-between p-3 rounded-xl bg-slate-50 dark:bg-slate-800 text-sm">
+                                <span className="text-slate-500">Stok saat ini</span>
+                                <span className="font-bold text-slate-800 dark:text-white">{product.stock} pcs</span>
+                            </div>
+
+                            {/* Preview */}
+                            {stockQty > 0 && (
+                                <div className={`flex items-center justify-between p-3 rounded-xl text-sm font-medium ${
+                                    stockModal.type === "in"
+                                        ? "bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-400"
+                                        : "bg-rose-50 dark:bg-rose-900/20 text-rose-700 dark:text-rose-400"
+                                }`}>
+                                    <span>Stok setelah</span>
+                                    <span className="font-bold text-lg">
+                                        {stockModal.type === "in"
+                                            ? product.stock + Number(stockQty)
+                                            : Math.max(0, product.stock - Number(stockQty))
+                                        } pcs
+                                    </span>
+                                </div>
+                            )}
+
+                            {/* Qty input */}
+                            <div>
+                                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">
+                                    Jumlah <span className="text-rose-500">*</span>
+                                </label>
+                                <input
+                                    type="number"
+                                    min="1"
+                                    autoFocus
+                                    value={stockQty}
+                                    onChange={(e) => setStockQty(e.target.value)}
+                                    placeholder="0"
+                                    className="w-full h-11 px-4 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-800 dark:text-white text-sm focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 outline-none"
+                                />
+                            </div>
+
+                            {/* Notes */}
+                            <div>
+                                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1.5">
+                                    Alasan
+                                </label>
+                                <div className="grid grid-cols-2 gap-2 mb-2">
+                                    {(stockModal.type === "in"
+                                        ? ["Restock dari supplier", "Bonus dari supplier", "Koreksi stok", "Lainnya"]
+                                        : ["Barang rusak", "Barang hilang", "Sampel/tester", "Koreksi stok"]
+                                    ).map((r) => (
+                                        <button
+                                            key={r}
+                                            type="button"
+                                            onClick={() => setStockNotes(r)}
+                                            className={`px-2 py-1.5 rounded-lg text-xs font-medium border transition-all ${
+                                                stockNotes === r
+                                                    ? "border-primary-500 bg-primary-50 dark:bg-primary-900/30 text-primary-700 dark:text-primary-300"
+                                                    : "border-slate-200 dark:border-slate-700 text-slate-500 hover:border-slate-300"
+                                            }`}
+                                        >
+                                            {r}
+                                        </button>
+                                    ))}
+                                </div>
+                                <input
+                                    type="text"
+                                    value={stockNotes}
+                                    onChange={(e) => setStockNotes(e.target.value)}
+                                    placeholder="Atau ketik alasan lain..."
+                                    className="w-full h-10 px-4 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-800 dark:text-white text-sm focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 outline-none"
+                                />
+                            </div>
+
+                            {stockModal.type === "out" && stockQty > product.stock && (
+                                <div className="flex items-center gap-2 p-3 rounded-xl bg-rose-50 dark:bg-rose-900/20 border border-rose-200 dark:border-rose-800">
+                                    <IconAlertTriangle size={14} className="text-rose-500 shrink-0" />
+                                    <p className="text-xs text-rose-600 dark:text-rose-400">Jumlah melebihi stok saat ini</p>
+                                </div>
+                            )}
+                        </div>
+
+                        {/* Footer */}
+                        <div className="px-6 pb-6 flex gap-3">
+                            <button
+                                type="button"
+                                onClick={() => { setStockModal({ open: false, type: "in" }); setStockQty(""); setStockNotes(""); }}
+                                disabled={isAdjusting}
+                                className="flex-1 px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 font-medium hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors disabled:opacity-50 text-sm"
+                            >
+                                Batal
+                            </button>
+                            <button
+                                type="button"
+                                onClick={handleAdjustStock}
+                                disabled={isAdjusting || !stockQty || Number(stockQty) <= 0 || (stockModal.type === "out" && Number(stockQty) > product.stock)}
+                                className={`flex-1 px-4 py-3 rounded-xl text-white font-medium transition-colors disabled:opacity-50 text-sm flex items-center justify-center gap-2 ${
+                                    stockModal.type === "in"
+                                        ? "bg-emerald-500 hover:bg-emerald-600"
+                                        : "bg-rose-500 hover:bg-rose-600"
+                                }`}
+                            >
+                                {isAdjusting
+                                    ? <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                                    : stockModal.type === "in" ? <><IconPlus size={16} />Tambah</> : <><IconMinus size={16} />Kurangi</>
+                                }
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </>
     );
 }

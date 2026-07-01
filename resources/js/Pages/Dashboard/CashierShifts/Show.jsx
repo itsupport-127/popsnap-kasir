@@ -180,15 +180,15 @@ export default function Show({ cashierShift, canForceClose = false }) {
                     <div className="space-y-6">
                         <div className="rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
                             <h2 className="text-lg font-semibold text-slate-900 dark:text-white">
-                                Cash Closing
+                                Tutup Kas
                             </h2>
                             <div className="mt-4 space-y-3">
                                 <div className="flex items-center justify-between rounded-xl bg-slate-50 px-4 py-3 dark:bg-slate-800/60">
-                                    <span className="text-sm text-slate-500 dark:text-slate-400">Expected Cash</span>
+                                    <span className="text-sm text-slate-500 dark:text-slate-400">Ekspektasi Kas</span>
                                     <span className="font-semibold text-slate-900 dark:text-white">{formatCurrency(cashierShift.expected_cash)}</span>
                                 </div>
                                 <div className="flex items-center justify-between rounded-xl bg-slate-50 px-4 py-3 dark:bg-slate-800/60">
-                                    <span className="text-sm text-slate-500 dark:text-slate-400">Actual Cash</span>
+                                    <span className="text-sm text-slate-500 dark:text-slate-400">Kas Aktual</span>
                                     <span className="font-semibold text-slate-900 dark:text-white">
                                         {cashierShift.actual_cash === null ? "-" : formatCurrency(cashierShift.actual_cash)}
                                     </span>

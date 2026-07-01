@@ -63,7 +63,8 @@ class Customer extends Model
 
     public function vouchers()
     {
-        return $this->hasMany(CustomerVoucher::class);
+        return $this->hasMany(Promo::class)
+            ->where('activation_mode', Promo::ACTIVATION_MANUAL);
     }
 
     public function receivables()

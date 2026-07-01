@@ -10,12 +10,14 @@ import {
     IconBuildingBank,
     IconCheck,
     IconAlertCircle,
+    IconDeviceFloppy,
 } from "@tabler/icons-react";
 import ThermalReceipt, {
     ThermalReceipt58mm,
 } from "@/Components/Receipt/ThermalReceipt";
 import ShippingLabel from "@/Components/Receipt/ShippingLabel";
 import { useAuthorization } from "@/Utils/authorization";
+import toast from "react-hot-toast";
 
 export default function Print({ transaction }) {
     const { storeProfile } = usePage().props;
@@ -23,6 +25,7 @@ export default function Print({ transaction }) {
     const [printMode, setPrintMode] = useState("invoice"); // 'invoice' | 'thermal80' | 'thermal58'
     const [showConfirmModal, setShowConfirmModal] = useState(false);
     const [isConfirming, setIsConfirming] = useState(false);
+    const [isQzPrinting, setIsQzPrinting] = useState(false);
     const canConfirmPayment = can("transactions-confirm-payment");
 
     const formatPrice = (price = 0) =>
@@ -46,15 +49,15 @@ export default function Print({ transaction }) {
         () =>
             items.reduce(
                 (sum, item) => sum + Number(item.discount_total || 0),
-                0
+                0,
             ),
-        [items]
+        [items],
     );
     const loyaltyDiscountTotal = Number(
-        transaction?.loyalty_discount_total || 0
+        transaction?.loyalty_discount_total || 0,
     );
     const voucherDiscountTotal = Number(
-        transaction?.customer_voucher_discount || 0
+        transaction?.customer_voucher_discount || 0,
     );
     const baseSubtotal =
         (transaction?.grand_total || 0) +
@@ -73,7 +76,7 @@ export default function Print({ transaction }) {
             email: storeProfile?.email || "",
             website: storeProfile?.website || "",
         }),
-        [storeProfile]
+        [storeProfile],
     );
 
     const paymentLabels = {
@@ -82,6 +85,7 @@ export default function Print({ transaction }) {
         midtrans: "Midtrans",
         xendit: "Xendit",
         pay_later: "Piutang",
+        dual_cash_qris: "Tunai + QRIS",
     };
     const paymentMethodKey = (
         transaction?.payment_method || "cash"
@@ -90,7 +94,10 @@ export default function Print({ transaction }) {
 
     const paymentStatuses = {
         paid: "Lunas",
-        pending: transaction?.payment_method === "pay_later" ? "Belum Lunas" : "Menunggu",
+        pending:
+            transaction?.payment_method === "pay_later"
+                ? "Belum Lunas"
+                : "Menunggu",
         failed: "Gagal",
         expired: "Kedaluwarsa",
         unpaid: "Belum Lunas",
@@ -105,8 +112,7 @@ export default function Print({ transaction }) {
         paid: "bg-success-100 text-success-700 dark:bg-success-900/50 dark:text-success-400",
         pending:
             "bg-warning-100 text-warning-700 dark:bg-warning-900/50 dark:text-warning-400",
-        unpaid:
-            "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400",
+        unpaid: "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-400",
         partial:
             "bg-primary-100 text-primary-700 dark:bg-primary-900/40 dark:text-primary-400",
         failed: "bg-danger-100 text-danger-700 dark:bg-danger-900/50 dark:text-danger-400",
@@ -120,7 +126,128 @@ export default function Print({ transaction }) {
     const showPaymentLink = isNonCash && transaction.payment_url;
 
     const handlePrint = () => {
-        window.print();
+        // Buat iframe tersembunyi
+        const iframe = document.createElement("iframe");
+        iframe.style.display = "none";
+        document.body.appendChild(iframe);
+
+        const doc = iframe.contentDocument;
+        doc.open();
+        doc.write(`
+        <html>
+        <head>
+            <style>
+                @page { size: 58mm auto; margin: 0; }
+                body { width: 58mm; margin: 0; font-family: monospace; font-size: 10px; }
+            </style>
+        </head>
+        <body>
+            ${document.querySelector(".thermal-receipt").outerHTML}
+        </body>
+        </html>
+    `);
+        doc.close();
+
+        iframe.contentWindow.focus();
+        iframe.contentWindow.print();
+
+        setTimeout(() => document.body.removeChild(iframe), 1000);
+    };
+
+    // Nama printer persis seperti yang muncul di Windows
+    const QZ_PRINTER_NAME = "POS-58";
+
+    const handleQzPrint = async () => {
+        if (!window.qz) {
+            toast.error("QZ Tray belum terdeteksi. Pastikan QZ Tray sudah jalan di komputer ini.");
+            return;
+        }
+
+        setIsQzPrinting(true);
+
+        const withTimeout = (promise, label, ms = 10000) =>
+            Promise.race([
+                promise,
+                new Promise((_, reject) =>
+                    setTimeout(() => reject(new Error(`Timeout di tahap: ${label}`)), ms)
+                ),
+            ]);
+
+        try {
+            const qz = window.qz;
+
+            // Ambil certificate dari backend (digital-certificate.txt)
+            qz.security.setCertificatePromise((resolve, reject) => {
+                fetch(route("qz.certificate"), { credentials: "same-origin" })
+                    .then((res) => res.text())
+                    .then((cert) => cert.trim() ? resolve(cert) : reject("Cert tidak ditemukan. Jalankan: php artisan qz:generate-cert"))
+                    .catch(reject);
+            });
+
+            // Sign setiap request dengan private key di server
+            qz.security.setSignatureAlgorithm("SHA512");
+            qz.security.setSignaturePromise((toSign) => (resolve, reject) => {
+                fetch(route("qz.sign"), {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json",
+                        "X-CSRF-TOKEN": document.querySelector('meta[name="csrf-token"]')?.content ?? "",
+                    },
+                    body: JSON.stringify({ toSign }),
+                    credentials: "same-origin",
+                })
+                    .then((res) => res.text())
+                    .then((sig) => sig.trim() ? resolve(sig) : reject("Signature kosong"))
+                    .catch(reject);
+            });
+
+            if (!qz.websocket.isActive()) {
+                await withTimeout(qz.websocket.connect(), "connect websocket");
+            }
+
+            const printer = await withTimeout(
+                qz.printers.find(QZ_PRINTER_NAME),
+                "cari printer"
+            );
+
+            const config = qz.configs.create(printer);
+
+            const size = printMode === "thermal58" ? "58" : "80";
+            const rawUrl = route("documents.transactions.receipt-raw", {
+                invoice: transaction.invoice,
+                size,
+            });
+
+            // Ambil teks ESC/POS lewat fetch BROWSER (bawa sesi login)
+            const rawResponse = await withTimeout(
+                fetch(rawUrl, { credentials: "same-origin" }),
+                "ambil teks struk"
+            );
+
+            if (!rawResponse.ok) {
+                throw new Error(
+                    `Gagal ambil teks struk (status ${rawResponse.status}). Pastikan kamu masih login.`
+                );
+            }
+
+            const rawText = await rawResponse.text();
+
+            const data = [
+                {
+                    type: "raw",
+                    format: "plain",
+                    data: rawText,
+                },
+            ];
+
+            await withTimeout(qz.print(config, data), "kirim ke printer", 15000);
+            toast.success("Struk terkirim ke printer!");
+        } catch (err) {
+            console.error("[QZ] ERROR:", err);
+            toast.error("Gagal mencetak: " + (err?.message || "periksa koneksi QZ Tray"));
+        } finally {
+            setIsQzPrinting(false);
+        }
     };
 
     const SimpleBarcode = ({ value }) => {
@@ -264,7 +391,10 @@ export default function Print({ transaction }) {
 
                             {printMode === "invoice" && (
                                 <a
-                                    href={route("pdf.transactions.invoice", transaction.invoice)}
+                                    href={route(
+                                        "pdf.transactions.invoice",
+                                        transaction.invoice,
+                                    )}
                                     target="_blank"
                                     rel="noopener noreferrer"
                                     className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-primary-500 hover:bg-primary-600 text-sm font-semibold text-white shadow-lg shadow-primary-500/30 transition-colors w-full sm:w-auto"
@@ -274,24 +404,50 @@ export default function Print({ transaction }) {
                                 </a>
                             )}
 
-                            {(printMode === "thermal80" || printMode === "thermal58") && (
-                                <a
-                                    href={route("pdf.transactions.receipt", {
-                                        invoice: transaction.invoice,
-                                        size: printMode === "thermal58" ? "58" : "80",
-                                    })}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-900 text-sm font-semibold text-white transition-colors w-full sm:w-auto"
-                                >
-                                    <IconPrinter size={18} />
-                                    PDF Struk {printMode === "thermal58" ? "58mm" : "80mm"}
-                                </a>
+                            {(printMode === "thermal80" ||
+                                printMode === "thermal58") && (
+                                <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
+                                    {/* Print Langsung — QZ Tray, tanpa kertas kosong */}
+                                    <button
+                                        onClick={handleQzPrint}
+                                        disabled={isQzPrinting}
+                                        className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-sm font-semibold text-white transition-colors w-full sm:w-auto disabled:opacity-60"
+                                    >
+                                        {isQzPrinting ? (
+                                            <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                                        ) : (
+                                            <IconPrinter size={18} />
+                                        )}
+                                        {isQzPrinting
+                                            ? "Mencetak..."
+                                            : "Print Langsung"}
+                                    </button>
+
+                                    {/* PDF — backup / kirim ke pelanggan */}
+                                    <a
+                                        href={route("pdf.transactions.receipt", {
+                                            invoice: transaction.invoice,
+                                            size:
+                                                printMode === "thermal58"
+                                                    ? "58"
+                                                    : "80",
+                                        })}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 text-sm font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors w-full sm:w-auto"
+                                    >
+                                        <IconDeviceFloppy size={16} />
+                                        Simpan PDF
+                                    </a>
+                                </div>
                             )}
 
                             {printMode === "shipping" && (
                                 <a
-                                    href={route("pdf.transactions.shipping", transaction.invoice)}
+                                    href={route(
+                                        "pdf.transactions.shipping",
+                                        transaction.invoice,
+                                    )}
                                     target="_blank"
                                     rel="noopener noreferrer"
                                     className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-sm font-semibold text-white transition-colors w-full sm:w-auto"
@@ -304,7 +460,8 @@ export default function Print({ transaction }) {
                     </div>
 
                     {/* Thermal Receipt Preview */}
-                    {(printMode === "thermal80" || printMode === "thermal58") && (
+                    {(printMode === "thermal80" ||
+                        printMode === "thermal58") && (
                         <div className="flex justify-center print:block">
                             <div className="bg-white rounded-2xl border border-slate-200 dark:border-slate-700 shadow-xl p-4 print:shadow-none print:border-0 print:p-0 print:rounded-none">
                                 {printMode === "thermal80" ? (
@@ -330,16 +487,16 @@ export default function Print({ transaction }) {
                     )}
 
                     {/* Shipping Label Preview */}
-{printMode === "shipping" && (
-    <div className="flex justify-center items-center py-10 print:py-0 print:block">
-        <div className="w-full max-w-[150mm] mx-auto transition-all duration-300 transform scale-100 md:scale-110 lg:scale-125 print:scale-100">
-            <ShippingLabel
-                transaction={transaction}
-                store={store}
-            />
-        </div>
-    </div>
-)}
+                    {printMode === "shipping" && (
+                        <div className="flex justify-center items-center py-10 print:py-0 print:block">
+                            <div className="w-full max-w-[150mm] mx-auto transition-all duration-300 transform scale-100 md:scale-110 lg:scale-125 print:scale-100">
+                                <ShippingLabel
+                                    transaction={transaction}
+                                    store={store}
+                                />
+                            </div>
+                        </div>
+                    )}
 
                     {/* Invoice View */}
                     {printMode === "invoice" && (
@@ -385,7 +542,9 @@ export default function Print({ transaction }) {
                                                         </span>
                                                     )}
                                                     {store.website && (
-                                                        <span>{store.website}</span>
+                                                        <span>
+                                                            {store.website}
+                                                        </span>
                                                     )}
                                                 </p>
                                             )}
@@ -395,7 +554,10 @@ export default function Print({ transaction }) {
                                     <div className="text-center sm:text-right">
                                         <div className="inline-flex flex-col items-center sm:items-end bg-white/5 print:bg-transparent rounded-xl px-3 py-2 sm:px-4 sm:py-3 min-w-[180px] sm:min-w-[200px]">
                                             <div className="flex items-center gap-2 mb-1 justify-center sm:justify-end">
-                                                <IconReceipt size={20} className="sm:w-6 sm:h-6" />
+                                                <IconReceipt
+                                                    size={20}
+                                                    className="sm:w-6 sm:h-6"
+                                                />
                                                 <span className="text-xs sm:text-sm font-medium opacity-90 print:opacity-100">
                                                     INVOICE
                                                 </span>
@@ -405,7 +567,7 @@ export default function Print({ transaction }) {
                                             </p>
                                             <p className="text-xs sm:text-sm opacity-80 print:opacity-100 mt-1">
                                                 {formatDateTime(
-                                                    transaction.created_at
+                                                    transaction.created_at,
                                                 )}
                                             </p>
                                         </div>
@@ -518,15 +680,17 @@ export default function Print({ transaction }) {
                                                     Number(item.price) || 0;
                                                 const unitPrice =
                                                     Number(
-                                                        item.unit_price || 0
+                                                        item.unit_price || 0,
                                                     ) || subtotal / quantity;
                                                 const baseUnitPrice =
                                                     Number(
-                                                        item.base_unit_price || 0
+                                                        item.base_unit_price ||
+                                                            0,
                                                     ) || unitPrice;
                                                 const hasPromo =
                                                     Number(
-                                                        item.discount_total || 0
+                                                        item.discount_total ||
+                                                            0,
                                                     ) > 0 &&
                                                     baseUnitPrice > unitPrice;
 
@@ -557,7 +721,8 @@ export default function Print({ transaction }) {
                                                                 ?.barcode && (
                                                                 <p className="text-xs text-slate-500 dark:text-slate-400">
                                                                     {
-                                                                        item.product
+                                                                        item
+                                                                            .product
                                                                             .barcode
                                                                     }
                                                                 </p>
@@ -568,13 +733,13 @@ export default function Print({ transaction }) {
                                                                 {hasPromo && (
                                                                     <p className="text-xs text-slate-400 line-through">
                                                                         {formatPrice(
-                                                                            baseUnitPrice
+                                                                            baseUnitPrice,
                                                                         )}
                                                                     </p>
                                                                 )}
                                                                 <p>
                                                                     {formatPrice(
-                                                                        unitPrice
+                                                                        unitPrice,
                                                                     )}
                                                                 </p>
                                                             </div>
@@ -584,7 +749,7 @@ export default function Print({ transaction }) {
                                                         </td>
                                                         <td className="py-3 text-right font-semibold text-slate-900 dark:text-white">
                                                             {formatPrice(
-                                                                subtotal
+                                                                subtotal,
                                                             )}
                                                         </td>
                                                     </tr>
@@ -608,7 +773,7 @@ export default function Print({ transaction }) {
                                             <span>
                                                 -{" "}
                                                 {formatPrice(
-                                                    promoDiscountTotal
+                                                    promoDiscountTotal,
                                                 )}
                                             </span>
                                         </div>
@@ -626,7 +791,7 @@ export default function Print({ transaction }) {
                                             <span>
                                                 +{" "}
                                                 {formatPrice(
-                                                    transaction.shipping_cost
+                                                    transaction.shipping_cost,
                                                 )}
                                             </span>
                                         </div>
@@ -635,7 +800,7 @@ export default function Print({ transaction }) {
                                         <span>Total</span>
                                         <span>
                                             {formatPrice(
-                                                transaction.grand_total
+                                                transaction.grand_total,
                                             )}
                                         </span>
                                     </div>
@@ -643,19 +808,27 @@ export default function Print({ transaction }) {
                                         <>
                                             <div className="flex justify-between text-slate-600 dark:text-slate-400 pt-2">
                                                 <span>Tunai</span>
-                                                <span>
-                                                    {formatPrice(
-                                                        transaction.cash
-                                                    )}
-                                                </span>
+                                                <span>{formatPrice(transaction.cash)}</span>
                                             </div>
                                             <div className="flex justify-between text-success-600 dark:text-success-400 font-medium">
                                                 <span>Kembali</span>
-                                                <span>
-                                                    {formatPrice(
-                                                        transaction.change
-                                                    )}
-                                                </span>
+                                                <span>{formatPrice(transaction.change)}</span>
+                                            </div>
+                                        </>
+                                    )}
+                                    {paymentMethodKey === "dual_cash_qris" && (
+                                        <>
+                                            <div className="flex justify-between text-slate-600 dark:text-slate-400 pt-2">
+                                                <span>Bayar Tunai</span>
+                                                <span>{formatPrice(transaction.dual_cash ?? 0)}</span>
+                                            </div>
+                                            <div className="flex justify-between text-slate-600 dark:text-slate-400">
+                                                <span>Bayar QRIS</span>
+                                                <span>{formatPrice(transaction.dual_qris ?? 0)}</span>
+                                            </div>
+                                            <div className="flex justify-between text-success-600 dark:text-success-400 font-medium">
+                                                <span>Kembali</span>
+                                                <span>{formatPrice(Math.max(0, (transaction.dual_cash ?? 0) + (transaction.dual_qris ?? 0) - transaction.grand_total))}</span>
                                             </div>
                                         </>
                                     )}
@@ -735,7 +908,7 @@ export default function Print({ transaction }) {
                                     </span>
                                     <span className="text-lg font-bold text-primary-600 dark:text-primary-400">
                                         {formatPrice(
-                                            transaction.grand_total ?? 0
+                                            transaction.grand_total ?? 0,
                                         )}
                                     </span>
                                 </div>
@@ -770,7 +943,7 @@ export default function Print({ transaction }) {
                                     router.patch(
                                         route(
                                             "transactions.confirm-payment",
-                                            transaction.id
+                                            transaction.id,
                                         ),
                                         {},
                                         {
@@ -781,7 +954,7 @@ export default function Print({ transaction }) {
                                             onError: () => {
                                                 setIsConfirming(false);
                                             },
-                                        }
+                                        },
                                     );
                                 }}
                                 disabled={isConfirming}

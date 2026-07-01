@@ -15,7 +15,7 @@ class Cart extends Model
      * @var array
      */
     protected $fillable = [
-        'cashier_id', 'product_id', 'qty', 'price', 'hold_id', 'hold_label', 'held_at',
+        'cashier_id', 'customer_id', 'product_id', 'qty', 'price', 'hold_id', 'hold_label', 'held_at',
     ];
 
     /**
@@ -35,6 +35,16 @@ class Cart extends Model
     public function product()
     {
         return $this->belongsTo(Product::class);
+    }
+
+    /**
+     * customer
+     *
+     * @return void
+     */
+    public function customer()
+    {
+        return $this->belongsTo(Customer::class);
     }
 
     /**

@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Apps;
 use App\Http\Controllers\Controller;
 use App\Models\Category;
 use App\Models\Product;
+use App\Models\StockMutation;
 use App\Services\AuditLogService;
 use App\Services\StockMutationService;
 use Illuminate\Http\Request;
@@ -261,5 +262,54 @@ class ProductController extends Controller
             'stock',
             'category_id',
         ]);
+    }
+    /**
+     * adjustStock — tambah atau kurangi stok manual dari halaman edit produk
+     */
+    public function adjustStock(Request $request, Product $product)
+    {
+        $request->validate([
+            'type'  => 'required|in:in,out',
+            'qty'   => 'required|integer|min:1',
+            'notes' => 'nullable|string|max:255',
+        ]);
+
+        $qty        = (int) $request->qty;
+        $type       = $request->type;
+        $stockBefore = $product->stock;
+
+        if ($type === 'out' && $qty > $stockBefore) {
+            return back()->withErrors(['qty' => 'Jumlah pengurangan melebihi stok saat ini ('.$stockBefore.' pcs).']);
+        }
+
+        $stockAfter = $type === 'in' ? $stockBefore + $qty : $stockBefore - $qty;
+
+        // Update stok produk
+        $product->update(['stock' => $stockAfter]);
+
+        // Catat mutasi stok
+        StockMutation::create([
+            'product_id'     => $product->id,
+            'reference_type' => 'manual',
+            'reference_id'   => null,
+            'mutation_type'  => $type === 'in' ? 'stock_in' : 'stock_out',
+            'qty'            => $qty,
+            'stock_before'   => $stockBefore,
+            'stock_after'    => $stockAfter,
+            'notes'          => $request->notes ?? ($type === 'in' ? 'Penambahan stok manual' : 'Pengurangan stok manual'),
+            'created_by'     => auth()->id(),
+        ]);
+
+        // Catat audit log
+        $this->auditLogService->log(
+            event: 'product.stock_adjusted',
+            module: 'products',
+            auditable: $product,
+            description: ($type === 'in' ? 'Tambah' : 'Kurangi')." stok {$product->title}: {$stockBefore} → {$stockAfter} pcs." . ($request->notes ? " Alasan: {$request->notes}" : ''),
+            before: ['stock' => $stockBefore],
+            after:  ['stock' => $stockAfter],
+        );
+
+        return back()->with('success', 'Stok berhasil ' . ($type === 'in' ? 'ditambahkan' : 'dikurangi') . ". ({$stockBefore} → {$stockAfter} pcs)");
     }
 }

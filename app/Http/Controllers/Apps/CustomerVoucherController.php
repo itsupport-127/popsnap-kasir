@@ -20,8 +20,9 @@ class CustomerVoucherController extends Controller
     public function index(Request $request)
     {
         $filters = [
-            'search' => $request->input('search'),
-            'status' => $request->input('status'),
+            'search'       => $request->input('search'),
+            'status'       => $request->input('status'),
+            'voucher_type' => $request->input('voucher_type'),
         ];
 
         $vouchers = CustomerVoucher::query()
@@ -34,6 +35,7 @@ class CustomerVoucherController extends Controller
                         ->orWhereHas('customer', fn ($customerQuery) => $customerQuery->where('name', 'like', '%'.$search.'%'));
                 });
             })
+            ->when($filters['voucher_type'], fn($q, $t) => $q->where('voucher_type', $t))
             ->when($filters['status'], function ($query, $status) {
                 match ($status) {
                     'active' => $query->where('is_active', true)->where('is_used', false),
@@ -57,13 +59,24 @@ class CustomerVoucherController extends Controller
     public function create()
     {
         return Inertia::render('Dashboard/CustomerVouchers/Create', [
-            'customers' => Customer::orderBy('name')->get(['id', 'name', 'no_telp', 'is_loyalty_member', 'loyalty_tier', 'loyalty_points']),
+            'customers'     => Customer::orderBy('name')->get(['id', 'name', 'no_telp', 'is_loyalty_member', 'loyalty_tier', 'loyalty_points']),
+            'voucherTypes'  => [
+                ['value' => 'personal',        'label' => 'Personal (1 Pelanggan)'],
+                ['value' => 'all',             'label' => 'Umum (Semua Pelanggan)'],
+                ['value' => 'member_only',     'label' => 'Umum (Khusus Member)'],
+                ['value' => 'non_member_only', 'label' => 'Umum (Khusus Non-Member)'],
+            ],
         ]);
     }
 
     public function store(Request $request)
     {
         $validated = $this->validateVoucher($request);
+
+        // Voucher umum tidak perlu customer_id
+        if (($validated['voucher_type'] ?? 'personal') !== 'personal') {
+            $validated['customer_id'] = null;
+        }
 
         $voucher = CustomerVoucher::create([
             ...$validated,
@@ -87,8 +100,14 @@ class CustomerVoucherController extends Controller
     public function edit(CustomerVoucher $customerVoucher)
     {
         return Inertia::render('Dashboard/CustomerVouchers/Edit', [
-            'voucher' => $customerVoucher->load('customer:id,name,no_telp'),
-            'customers' => Customer::orderBy('name')->get(['id', 'name', 'no_telp', 'is_loyalty_member', 'loyalty_tier', 'loyalty_points']),
+            'voucher'      => $customerVoucher->load('customer:id,name,no_telp'),
+            'customers'    => Customer::orderBy('name')->get(['id', 'name', 'no_telp', 'is_loyalty_member', 'loyalty_tier', 'loyalty_points']),
+            'voucherTypes' => [
+                ['value' => 'personal',        'label' => 'Personal (1 Pelanggan)'],
+                ['value' => 'all',             'label' => 'Umum (Semua Pelanggan)'],
+                ['value' => 'member_only',     'label' => 'Umum (Khusus Member)'],
+                ['value' => 'non_member_only', 'label' => 'Umum (Khusus Non-Member)'],
+            ],
         ]);
     }
 
@@ -135,7 +154,9 @@ class CustomerVoucherController extends Controller
     private function validateVoucher(Request $request, ?CustomerVoucher $voucher = null): array
     {
         $validated = $request->validate([
-            'customer_id' => ['required', 'integer', 'exists:customers,id'],
+            'voucher_type'  => ['required', 'string', 'in:personal,all,member_only,non_member_only'],
+            'customer_id'   => ['nullable', 'integer', 'exists:customers,id'],
+            'max_uses'      => ['nullable', 'integer', 'min:1'],
             'code' => [
                 'nullable',
                 'string',
@@ -173,7 +194,10 @@ class CustomerVoucherController extends Controller
     private function auditPayload(CustomerVoucher $voucher): array
     {
         return [
-            'customer_id' => $voucher->customer_id,
+            'customer_id'  => $voucher->customer_id,
+            'voucher_type' => $voucher->voucher_type,
+            'max_uses'     => $voucher->max_uses,
+            'used_count'   => $voucher->used_count,
             'code' => $voucher->code,
             'name' => $voucher->name,
             'discount_type' => $voucher->discount_type,

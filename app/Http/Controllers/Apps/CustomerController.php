@@ -4,10 +4,11 @@ namespace App\Http\Controllers\Apps;
 
 use App\Http\Controllers\Controller;
 use App\Models\Customer;
-use App\Models\CustomerVoucher;
+use App\Models\Promo;
 use App\Models\Transaction;
 use App\Services\CustomerSegmentationService;
 use App\Services\LoyaltyService;
+use App\Services\PromoService;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
 use Inertia\Inertia;
@@ -20,6 +21,7 @@ class CustomerController extends Controller
 {
     public function __construct(
         private readonly LoyaltyService $loyaltyService,
+        private readonly PromoService $promoService,
         private readonly CustomerSegmentationService $segmentationService
     ) {}
 
@@ -264,7 +266,7 @@ class CustomerController extends Controller
             ->latest()
             ->limit(10)
             ->get()
-            ->map(fn (CustomerVoucher $voucher) => $this->loyaltyService->serializeVoucher($voucher) + [
+            ->map(fn (Promo $voucher) => $this->promoService->serializeManualPromo($voucher) + [
                 'is_active' => (bool) $voucher->is_active,
                 'is_used'   => (bool) $voucher->is_used,
             ]);
@@ -329,7 +331,7 @@ class CustomerController extends Controller
             ->latest()
             ->limit(5)
             ->get()
-            ->map(fn (CustomerVoucher $voucher) => $this->loyaltyService->serializeVoucher($voucher));
+            ->map(fn (Promo $voucher) => $this->promoService->serializeManualPromo($voucher));
 
         return response()->json([
             'success'  => true,

@@ -9,9 +9,8 @@ use App\Models\Customer;
 use App\Models\CustomerCampaign;
 use App\Models\CustomerCampaignLog;
 use App\Models\CustomerSegment;
-use App\Models\CustomerVoucher;
+use App\Models\Promo;
 use App\Models\LoyaltyPointHistory;
-use App\Models\PricingRule;
 use App\Models\Product;
 use App\Models\Transaction;
 use App\Models\User;
@@ -577,7 +576,7 @@ class AdvancedSalesInsightsController extends Controller
 
     protected function promoMonitor(): array
     {
-        $rules = PricingRule::query()
+        $promos = Promo::query()
             ->with(['product:id,title', 'category:id,name'])
             ->orderByDesc('priority')
             ->orderBy('name')
@@ -585,32 +584,36 @@ class AdvancedSalesInsightsController extends Controller
 
         return [
             'summary' => [
-                'active' => $rules->filter(fn (PricingRule $rule) => $rule->currentStatusLabel() === 'active')->count(),
-                'scheduled' => $rules->filter(fn (PricingRule $rule) => $rule->currentStatusLabel() === 'scheduled')->count(),
-                'expired' => $rules->filter(fn (PricingRule $rule) => $rule->currentStatusLabel() === 'expired')->count(),
-                'inactive' => $rules->filter(fn (PricingRule $rule) => $rule->currentStatusLabel() === 'inactive')->count(),
+                'active' => $promos->filter(fn (Promo $promo) => $promo->currentStatusLabel() === 'active')->count(),
+                'scheduled' => $promos->filter(fn (Promo $promo) => $promo->currentStatusLabel() === 'scheduled')->count(),
+                'expired' => $promos->filter(fn (Promo $promo) => $promo->currentStatusLabel() === 'expired')->count(),
+                'inactive' => $promos->filter(fn (Promo $promo) => $promo->currentStatusLabel() === 'inactive')->count(),
                 'by_kind' => [
-                    PricingRule::KIND_STANDARD_DISCOUNT => $rules->where('kind', PricingRule::KIND_STANDARD_DISCOUNT)->count(),
-                    PricingRule::KIND_QTY_BREAK => $rules->where('kind', PricingRule::KIND_QTY_BREAK)->count(),
-                    PricingRule::KIND_BUNDLE_PRICE => $rules->where('kind', PricingRule::KIND_BUNDLE_PRICE)->count(),
-                    PricingRule::KIND_BUY_X_GET_Y => $rules->where('kind', PricingRule::KIND_BUY_X_GET_Y)->count(),
+                    Promo::KIND_STANDARD_DISCOUNT => $promos->where('discount_kind', Promo::KIND_STANDARD_DISCOUNT)->count(),
+                    Promo::KIND_QTY_BREAK => $promos->where('discount_kind', Promo::KIND_QTY_BREAK)->count(),
+                    Promo::KIND_BUNDLE_PRICE => $promos->where('discount_kind', Promo::KIND_BUNDLE_PRICE)->count(),
+                    Promo::KIND_BUY_X_GET_Y => $promos->where('discount_kind', Promo::KIND_BUY_X_GET_Y)->count(),
+                ],
+                'by_activation' => [
+                    Promo::ACTIVATION_AUTO => $promos->where('activation_mode', Promo::ACTIVATION_AUTO)->count(),
+                    Promo::ACTIVATION_MANUAL => $promos->where('activation_mode', Promo::ACTIVATION_MANUAL)->count(),
                 ],
             ],
-            'active_rules' => $rules
-                ->filter(fn (PricingRule $rule) => $rule->currentStatusLabel() === 'active')
+            'active_rules' => $promos
+                ->filter(fn (Promo $promo) => $promo->currentStatusLabel() === 'active')
                 ->take(5)
                 ->values()
-                ->map(fn (PricingRule $rule) => $this->serializePromoRule($rule))
+                ->map(fn (Promo $promo) => $this->serializePromoRule($promo))
                 ->all(),
-            'scheduled_rules' => $rules
-                ->filter(fn (PricingRule $rule) => $rule->currentStatusLabel() === 'scheduled')
-                ->sortBy(fn (PricingRule $rule) => optional($rule->starts_at)?->timestamp ?? PHP_INT_MAX)
+            'scheduled_rules' => $promos
+                ->filter(fn (Promo $promo) => $promo->currentStatusLabel() === 'scheduled')
+                ->sortBy(fn (Promo $promo) => optional($promo->starts_at)?->timestamp ?? PHP_INT_MAX)
                 ->take(5)
                 ->values()
-                ->map(fn (PricingRule $rule) => $this->serializePromoRule($rule))
+                ->map(fn (Promo $promo) => $this->serializePromoRule($promo))
                 ->all(),
             'recent_audits' => AuditLog::query()
-                ->where('module', 'pricing_rules')
+                ->where('module', 'promos')
                 ->latest('id')
                 ->limit(5)
                 ->get()
@@ -633,7 +636,7 @@ class AdvancedSalesInsightsController extends Controller
         $historyQuery = LoyaltyPointHistory::query();
         $this->applyDateRangeFilter($historyQuery, 'created_at', $filters);
 
-        $vouchers = CustomerVoucher::query()->get();
+        $vouchers = Promo::query()->where('activation_mode', Promo::ACTIVATION_MANUAL)->get();
 
         return [
             'summary' => [
@@ -655,11 +658,11 @@ class AdvancedSalesInsightsController extends Controller
                     'platinum' => $members->where('loyalty_tier', 'platinum')->count(),
                 ],
                 'voucher_summary' => [
-                    'active' => $vouchers->filter(fn (CustomerVoucher $voucher) => $voucher->currentStatusLabel() === 'active')->count(),
-                    'scheduled' => $vouchers->filter(fn (CustomerVoucher $voucher) => $voucher->currentStatusLabel() === 'scheduled')->count(),
-                    'expired' => $vouchers->filter(fn (CustomerVoucher $voucher) => $voucher->currentStatusLabel() === 'expired')->count(),
-                    'used' => $vouchers->filter(fn (CustomerVoucher $voucher) => $voucher->currentStatusLabel() === 'used')->count(),
-                    'inactive' => $vouchers->filter(fn (CustomerVoucher $voucher) => $voucher->currentStatusLabel() === 'inactive')->count(),
+                    'active' => $vouchers->filter(fn (Promo $voucher) => $voucher->currentStatusLabel() === 'active')->count(),
+                    'scheduled' => $vouchers->filter(fn (Promo $voucher) => $voucher->currentStatusLabel() === 'scheduled')->count(),
+                    'expired' => $vouchers->filter(fn (Promo $voucher) => $voucher->currentStatusLabel() === 'expired')->count(),
+                    'used' => $vouchers->filter(fn (Promo $voucher) => $voucher->currentStatusLabel() === 'used')->count(),
+                    'inactive' => $vouchers->filter(fn (Promo $voucher) => $voucher->currentStatusLabel() === 'inactive')->count(),
                 ],
             ],
             'top_members' => Customer::query()
@@ -739,12 +742,13 @@ class AdvancedSalesInsightsController extends Controller
         }
     }
 
-    protected function serializePromoRule(PricingRule $rule): array
+    protected function serializePromoRule(Promo $rule): array
     {
         return [
             'id' => $rule->id,
             'name' => $rule->name,
-            'kind' => $rule->kind,
+            'kind' => $rule->discount_kind,
+            'activation_mode' => $rule->activation_mode,
             'status_label' => $rule->currentStatusLabel(),
             'priority' => (int) $rule->priority,
             'target_type' => $rule->target_type,

@@ -9,12 +9,20 @@ class CustomerVoucher extends Model
 {
     use HasFactory;
 
-    public const TYPE_FIXED_AMOUNT = 'fixed_amount';
+    public const TYPE_FIXED_AMOUNT  = 'fixed_amount';
+    public const TYPE_PERCENTAGE    = 'percentage';
 
-    public const TYPE_PERCENTAGE = 'percentage';
+    // voucher_type
+    public const VOUCHER_PERSONAL       = 'personal';      // assign ke 1 pelanggan
+    public const VOUCHER_ALL            = 'all';           // semua pelanggan
+    public const VOUCHER_MEMBER_ONLY    = 'member_only';   // khusus loyalty member
+    public const VOUCHER_NON_MEMBER     = 'non_member_only'; // khusus non-member
 
     protected $fillable = [
         'customer_id',
+        'voucher_type',
+        'max_uses',
+        'used_count',
         'code',
         'name',
         'discount_type',
@@ -32,6 +40,8 @@ class CustomerVoucher extends Model
 
     protected $casts = [
         'customer_id' => 'integer',
+        'max_uses' => 'integer',
+        'used_count' => 'integer',
         'discount_value' => 'float',
         'minimum_order' => 'integer',
         'is_active' => 'boolean',
@@ -56,6 +66,24 @@ class CustomerVoucher extends Model
     public function creator()
     {
         return $this->belongsTo(User::class, 'created_by');
+    }
+
+    public function isGeneral(): bool
+    {
+        return $this->voucher_type !== self::VOUCHER_PERSONAL;
+    }
+
+    public function isEligibleForCustomer(?\App\Models\Customer $customer): bool
+    {
+        if (! $customer) return false;
+
+        return match ($this->voucher_type) {
+            self::VOUCHER_PERSONAL    => (int) $this->customer_id === (int) $customer->id,
+            self::VOUCHER_ALL         => true,
+            self::VOUCHER_MEMBER_ONLY => (bool) $customer->is_loyalty_member,
+            self::VOUCHER_NON_MEMBER  => ! $customer->is_loyalty_member,
+            default => false,
+        };
     }
 
     public function currentStatusLabel(): string

@@ -197,18 +197,11 @@ export default function Menu() {
                     permissions: hasAnyPermission(["customers-access"]),
                 },
                 {
-                    title: "Promo Harga",
-                    href: route("pricing-rules.index"),
-                    active: url.startsWith("/dashboard/pricing-rules"),
+                    title: "Promo",
+                    href: route("promos.index"),
+                    active: url.startsWith("/dashboard/promos"),
                     icon: <IconChartInfographic size={20} strokeWidth={1.5} />,
-                    permissions: hasAnyPermission(["pricing-rules-access"]),
-                },
-                {
-                    title: "Voucher Customer",
-                    href: route("customer-vouchers.index"),
-                    active: url.startsWith("/dashboard/customer-vouchers"),
-                    icon: <IconCreditCard size={20} strokeWidth={1.5} />,
-                    permissions: hasAnyPermission(["customer-vouchers-access"]),
+                    permissions: hasAnyPermission(["promos-access"]),
                 },
                 {
                     title: "Segment Customer",

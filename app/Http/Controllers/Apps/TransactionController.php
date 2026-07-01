@@ -6,7 +6,7 @@ use App\Exceptions\PaymentGatewayException;
 use App\Http\Controllers\Controller;
 use App\Models\Cart;
 use App\Models\Customer;
-use App\Models\CustomerVoucher;
+use App\Models\Promo;
 use App\Models\PaymentSetting;
 use App\Models\Product;
 use App\Models\Receivable;
@@ -15,7 +15,7 @@ use App\Services\AuditLogService;
 use App\Services\CashierShiftService;
 use App\Services\LoyaltyService;
 use App\Services\Payments\PaymentGatewayManager;
-use App\Services\PricingService;
+use App\Services\PromoService;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -29,7 +29,7 @@ class TransactionController extends Controller
     public function __construct(
         private readonly CashierShiftService $cashierShiftService,
         private readonly AuditLogService $auditLogService,
-        private readonly PricingService $pricingService,
+        private readonly PromoService $promoService,
         private readonly LoyaltyService $loyaltyService
     ) {}
 
@@ -44,15 +44,20 @@ class TransactionController extends Controller
         $activeShift = $this->cashierShiftService->getActiveShiftForUser($userId);
 
         // Get active cart items (not held)
-        $carts = Cart::with('product')
+        $carts = Cart::with(['product', 'customer:id,name,is_loyalty_member,loyalty_tier,member_code'])
             ->where('cashier_id', $userId)
             ->active()
             ->latest()
             ->get();
 
+        // Pelanggan yang sedang aktif di keranjang (kalau ada), supaya
+        // tetap muncul walau kasir pindah halaman lalu kembali lagi.
+        $activeCustomer = $carts->first()?->customer;
+
         $initialPricingPreview = $this->loyaltyService->previewCheckout(
-            $this->pricingService->previewCart($carts, null)
+            $this->promoService->previewCart($carts, null)
         );
+
 
         // Get held carts grouped by hold_id
         $heldCarts = Cart::with('product:id,title,sell_price,image')
@@ -62,6 +67,9 @@ class TransactionController extends Controller
             ->groupBy('hold_id')
             ->map(function ($items, $holdId) {
                 $first = $items->first();
+                $customer = $first->customer_id
+                    ? \App\Models\Customer::select('id', 'name')->find($first->customer_id)
+                    : null;
 
                 return [
                     'hold_id' => $holdId,
@@ -69,6 +77,8 @@ class TransactionController extends Controller
                     'held_at' => $first->held_at?->toISOString(),
                     'items_count' => $items->sum('qty'),
                     'total' => $items->sum('price'),
+                    'customer_id' => $first->customer_id,
+                    'customer_name' => $customer?->name,
                 ];
             })
             ->values();
@@ -82,19 +92,19 @@ class TransactionController extends Controller
             ->where('stock', '>', 0)
             ->orderBy('title')
             ->get();
-        $pricingBadges = $this->pricingService->previewProducts($products, null);
+        $pricingBadges = $this->promoService->previewProducts($products, null);
         $products = $products->map(function (Product $product) use ($pricingBadges) {
             $pricing = $pricingBadges->get($product->id);
 
             return [
                 ...$product->toArray(),
-                'pricing_badge' => $pricing && ! empty($pricing['pricing_rule']) ? [
-                    'label' => $pricing['pricing_rule']['label'],
-                    'promo_price' => $pricing['pricing_rule']['price_context']
+                'pricing_badge' => $pricing && ! empty($pricing['promo']) ? [
+                    'label' => $pricing['promo']['label'],
+                    'promo_price' => $pricing['promo']['price_context']
                         ? $pricing['effective_unit_price']
                         : null,
                     'base_price' => $pricing['base_unit_price'],
-                    'kind' => $pricing['pricing_rule']['kind'],
+                    'kind' => $pricing['promo']['discount_kind'],
                 ] : null,
             ];
         });
@@ -126,6 +136,7 @@ class TransactionController extends Controller
             'carts' => $carts,
             'carts_total' => $carts_total,
             'heldCarts' => $heldCarts,
+            'activeCustomer' => $activeCustomer,
             'customers' => $customers,
             'products' => $products,
             'categories' => $categories,
@@ -135,7 +146,21 @@ class TransactionController extends Controller
             'bankAccounts' => $bankAccounts,
             'qrisStaticConfig' => $paymentSetting?->qrisStaticConfig() ?? null,
             'shiftSummary' => $this->cashierShiftService->summarizeForDisplay($activeShift),
-            'loyaltyTierOptions' => $this->loyaltyService->tierOptions(),
+            'loyaltyTierOptions'  => $this->loyaltyService->tierOptions(),
+            'generalVouchers'     => Promo::query()
+                ->where('activation_mode', Promo::ACTIVATION_MANUAL)
+                ->whereNull('customer_id')
+                ->where('is_active', true)
+                ->where(function ($q) {
+                    $q->whereNull('ends_at')->orWhere('ends_at', '>=', now());
+                })
+                ->where(function ($q) {
+                    $q->whereNull('starts_at')->orWhere('starts_at', '<=', now());
+                })
+                ->get()
+                ->filter(fn (Promo $promo) => $promo->usageAvailable())
+                ->map(fn (Promo $promo) => $this->promoService->serializeManualPromo($promo))
+                ->values(),
         ]);
     }
 
@@ -170,15 +195,20 @@ class TransactionController extends Controller
             'discount' => ['nullable', 'integer', 'min:0'],
             'shipping_cost' => ['nullable', 'integer', 'min:0'],
             'redeem_points' => ['nullable', 'integer', 'min:0'],
-            'customer_voucher_id' => ['nullable', 'integer', 'exists:customer_vouchers,id'],
+            // Voucher tunggal (lama) tetap didukung, plus array voucher (baru)
+            // supaya kasir bisa pakai lebih dari satu voucher sekaligus.
+            'customer_voucher_id' => ['nullable', 'integer', 'exists:promos,id'],
+            'customer_voucher_ids' => ['nullable', 'array'],
+            'customer_voucher_ids.*' => ['integer', 'exists:promos,id'],
         ]);
 
         $customer = isset($validated['customer_id'])
             ? Customer::find($validated['customer_id'])
             : null;
-        $voucher = isset($validated['customer_voucher_id'])
-            ? CustomerVoucher::find($validated['customer_voucher_id'])
-            : null;
+        $voucherIds = ! empty($validated['customer_voucher_ids'])
+            ? $validated['customer_voucher_ids']
+            : (isset($validated['customer_voucher_id']) ? [$validated['customer_voucher_id']] : []);
+        $vouchers = ! empty($voucherIds) ? Promo::whereIn('id', $voucherIds)->get() : collect();
 
         $carts = Cart::with('product.category')
             ->where('cashier_id', $request->user()->id)
@@ -186,7 +216,7 @@ class TransactionController extends Controller
             ->latest()
             ->get();
 
-        $pricingPreview = $this->pricingService->previewCart($carts, $customer);
+        $pricingPreview = $this->promoService->previewCart($carts, $customer);
 
         return response()->json([
             'success' => true,
@@ -194,7 +224,7 @@ class TransactionController extends Controller
                 'manual_discount' => (int) ($validated['discount'] ?? 0),
                 'shipping_cost' => (int) ($validated['shipping_cost'] ?? 0),
                 'redeem_points' => (int) ($validated['redeem_points'] ?? 0),
-                'voucher' => $voucher,
+                'vouchers' => $vouchers,
             ]),
         ]);
     }
@@ -220,10 +250,11 @@ class TransactionController extends Controller
             return redirect()->back()->with('error', 'Out of Stock Product!.');
         }
 
-        // Cek keranjang
+        // Cek keranjang — hanya cart aktif (bukan yang sedang di-hold)
         $cart = Cart::with('product')
             ->where('product_id', $request->product_id)
             ->where('cashier_id', auth()->user()->id)
+            ->active()
             ->first();
 
         if ($cart) {
@@ -317,6 +348,7 @@ class TransactionController extends Controller
     {
         $request->validate([
             'label' => 'nullable|string|max:50',
+            'customer_id' => 'nullable|exists:customers,id',
         ]);
 
         $userId = auth()->user()->id;
@@ -337,16 +369,38 @@ class TransactionController extends Controller
         $holdId = 'HOLD-'.strtoupper(uniqid());
         $label = $request->label ?: 'Transaksi '.now()->format('H:i');
 
-        // Mark all active cart items as held
+        // Mark all active cart items as held, sekaligus simpan pelanggan
+        // yang sedang dipilih supaya tidak hilang saat dilanjutkan nanti.
         Cart::where('cashier_id', $userId)
             ->active()
             ->update([
                 'hold_id' => $holdId,
                 'hold_label' => $label,
                 'held_at' => now(),
+                'customer_id' => $request->customer_id,
             ]);
 
         return back()->with('success', 'Transaksi ditahan: '.$label);
+    }
+
+    /**
+     * setCartCustomer - Simpan pelanggan yang dipilih ke keranjang aktif,
+     * supaya tetap ingat siapa pelanggannya walau kasir pindah halaman
+     * atau browser di-refresh.
+     */
+    public function setCartCustomer(Request $request)
+    {
+        $request->validate([
+            'customer_id' => 'nullable|exists:customers,id',
+        ]);
+
+        $userId = auth()->user()->id;
+
+        Cart::where('cashier_id', $userId)
+            ->active()
+            ->update(['customer_id' => $request->customer_id]);
+
+        return back();
     }
 
     /**
@@ -475,11 +529,16 @@ class TransactionController extends Controller
      */
     public function store(Request $request, PaymentGatewayManager $paymentGatewayManager)
     {
-        $isPayLater = $request->boolean('pay_later');
+        $isPayLater     = $request->boolean('pay_later');
         $paymentGateway = $isPayLater ? null : $request->input('payment_gateway');
         if ($paymentGateway) {
             $paymentGateway = strtolower($paymentGateway);
         }
+
+        $isDualPayment  = $paymentGateway === 'dual_cash_qris';
+        $dualCash       = $isDualPayment ? max(0, (int) $request->input('dual_cash', 0)) : 0;
+        $dualQris       = $isDualPayment ? max(0, (int) $request->input('dual_qris', 0)) : 0;
+
         $paymentSetting = null;
 
         if ($isPayLater && ! $request->filled('due_date')) {
@@ -488,7 +547,8 @@ class TransactionController extends Controller
                 ->with('error', 'Tanggal jatuh tempo wajib diisi untuk nota barang.');
         }
 
-        if ($paymentGateway) {
+        // Validasi gateway — skip untuk dual_cash_qris dan gateway kosong
+        if ($paymentGateway && ! $isDualPayment) {
             $paymentSetting = PaymentSetting::first();
 
             if (! $paymentSetting || ! $paymentSetting->isGatewayReady($paymentGateway)) {
@@ -505,17 +565,25 @@ class TransactionController extends Controller
         }
 
         $invoice = 'TRX-'.Str::upper($random);
-        $isCashPayment = empty($paymentGateway) && ! $isPayLater;
+        $isCashPayment  = empty($paymentGateway) && ! $isPayLater && ! $isDualPayment;
+        $isQrisStatic   = $paymentGateway === 'qris_static';
         $manualDiscount = max(0, (int) $request->input('discount', 0));
-        $shippingCost = max(0, (int) $request->input('shipping_cost', 0));
+        $shippingCost   = max(0, (int) $request->input('shipping_cost', 0));
         $requestedRedeemPoints = max(0, (int) $request->input('redeem_points', 0));
-        $cashAmount = $isCashPayment ? max(0, (int) $request->cash) : 0;
+        $cashAmount = $isCashPayment
+            ? max(0, (int) $request->cash)
+            : ($isDualPayment ? $dualCash : 0);
         $customer = $request->filled('customer_id')
             ? Customer::find($request->integer('customer_id'))
             : null;
-        $voucher = $request->filled('customer_voucher_id')
-            ? CustomerVoucher::find($request->integer('customer_voucher_id'))
-            : null;
+        // Terima 'customer_voucher_ids' (array, multi-voucher) — tetap fallback
+        // ke 'customer_voucher_id' tunggal untuk kompatibilitas mundur.
+        $requestedVoucherIds = $request->input('customer_voucher_ids');
+        $requestedVoucherIds = is_array($requestedVoucherIds) ? array_filter(array_map('intval', $requestedVoucherIds)) : [];
+        if (empty($requestedVoucherIds) && $request->filled('customer_voucher_id')) {
+            $requestedVoucherIds = [$request->integer('customer_voucher_id')];
+        }
+        $vouchers = ! empty($requestedVoucherIds) ? Promo::whereIn('id', $requestedVoucherIds)->get() : collect();
 
         $transaction = DB::transaction(function () use (
             $request,
@@ -523,12 +591,16 @@ class TransactionController extends Controller
             $cashAmount,
             $paymentGateway,
             $isCashPayment,
+            $isQrisStatic,
+            $isDualPayment,
+            $dualCash,
+            $dualQris,
             $isPayLater,
             $manualDiscount,
             $shippingCost,
             $requestedRedeemPoints,
             $customer,
-            $voucher
+            $vouchers
         ) {
             $activeShift = $this->cashierShiftService->requireActiveShiftForUser(
                 auth()->user()->id,
@@ -544,12 +616,12 @@ class TransactionController extends Controller
                 abort(422, 'Keranjang kosong.');
             }
 
-            $pricingPreview = $this->pricingService->previewCart($carts, $customer);
+            $pricingPreview = $this->promoService->previewCart($carts, $customer);
             $checkoutPreview = $this->loyaltyService->previewCheckout($pricingPreview, $customer, [
                 'manual_discount' => $manualDiscount,
                 'shipping_cost' => $shippingCost,
                 'redeem_points' => $requestedRedeemPoints,
-                'voucher' => $voucher,
+                'vouchers' => $vouchers,
             ]);
             $pricingItems = collect($pricingPreview['items']);
             $subtotalAfterPromo = (int) data_get($pricingPreview, 'summary.subtotal_after_promo', 0);
@@ -557,7 +629,7 @@ class TransactionController extends Controller
             $loyaltyDiscount = (int) data_get($checkoutPreview, 'summary.loyalty_discount_total', 0);
             $appliedManualDiscount = (int) data_get($checkoutPreview, 'summary.manual_discount_total', 0);
             $grandTotal = (int) data_get($checkoutPreview, 'summary.grand_total', 0);
-            $changeAmount = $isCashPayment ? max(0, $cashAmount - $grandTotal) : 0;
+            $changeAmount = $isCashPayment ? max(0, $cashAmount - $grandTotal) : ($isDualPayment ? max(0, ($dualCash + $dualQris) - $grandTotal) : 0);
 
             $transaction = Transaction::create([
                 'cashier_id' => auth()->user()->id,
@@ -570,12 +642,16 @@ class TransactionController extends Controller
                 'loyalty_points_redeemed' => (int) data_get($checkoutPreview, 'summary.applied_redeem_points', 0),
                 'loyalty_discount_total' => $loyaltyDiscount,
                 'customer_voucher_discount' => $voucherDiscount,
-                'customer_voucher_code' => data_get($checkoutPreview, 'voucher.code'),
-                'customer_voucher_name' => data_get($checkoutPreview, 'voucher.name'),
+                // Beberapa voucher digabung jadi satu string dipisah koma supaya
+                // tetap kompatibel dengan kolom lama (tanpa perlu migrasi baru).
+                'customer_voucher_code' => collect(data_get($checkoutPreview, 'vouchers', []))->pluck('code')->filter()->implode(', ') ?: null,
+                'customer_voucher_name' => collect(data_get($checkoutPreview, 'vouchers', []))->pluck('name')->filter()->implode(', ') ?: null,
                 'shipping_cost' => $shippingCost,
                 'grand_total' => $grandTotal,
-                'payment_method' => $isPayLater ? 'pay_later' : ($paymentGateway ?: 'cash'),
-                'payment_status' => $isCashPayment ? 'paid' : ($isPayLater ? 'unpaid' : 'pending'),
+                'payment_method' => $isPayLater ? 'pay_later' : ($isDualPayment ? 'dual_cash_qris' : ($paymentGateway ?: 'cash')),
+                'payment_status' => $isCashPayment || $isQrisStatic || $isDualPayment ? 'paid' : ($isPayLater ? 'unpaid' : 'pending'),
+                'dual_cash' => $isDualPayment ? $dualCash : null,
+                'dual_qris' => $isDualPayment ? $dualQris : null,
                 'bank_account_id' => $paymentGateway === 'bank_transfer' ? $request->bank_account_id : null,
             ]);
 
@@ -594,11 +670,11 @@ class TransactionController extends Controller
                     'unit_price' => $unitPrice,
                     'price' => $lineTotal,
                     'discount_total' => $linePromoDiscount,
-                    'pricing_rule_id' => data_get($pricingItem, 'pricing_rule.id'),
-                    'pricing_rule_name' => data_get($pricingItem, 'pricing_rule.name'),
-                    'pricing_rule_kind' => data_get($pricingItem, 'pricing_rule.kind'),
-                    'pricing_group_key' => data_get($pricingItem, 'pricing_group_key'),
-                    'pricing_group_label' => data_get($pricingItem, 'pricing_group_label'),
+                    'promo_id' => data_get($pricingItem, 'promo.id'),
+                    'pricing_rule_name' => data_get($pricingItem, 'promo.name'),
+                    'pricing_rule_kind' => data_get($pricingItem, 'promo.discount_kind'),
+                    'pricing_group_key' => data_get($pricingItem, 'promo_group_key'),
+                    'pricing_group_label' => data_get($pricingItem, 'promo_group_label'),
                 ]);
 
                 $total_buy_price = $cart->product->buy_price * $cart->qty;
@@ -621,6 +697,34 @@ class TransactionController extends Controller
 
             $this->loyaltyService->finalizeTransaction($transaction, $customer, $checkoutPreview);
 
+            // Update used_count untuk promo umum, atau mark used untuk promo personal
+            // — hanya untuk voucher yang benar2 lolos validasi (lihat checkoutPreview.vouchers).
+            // Mendukung banyak voucher sekaligus dalam satu transaksi.
+            $appliedVoucherIds = collect(data_get($checkoutPreview, 'vouchers', []))->pluck('id')->all();
+
+            foreach ($vouchers as $appliedVoucher) {
+                if (! in_array($appliedVoucher->id, $appliedVoucherIds, true)) {
+                    continue;
+                }
+
+                if ($appliedVoucher->isPersonal()) {
+                    $appliedVoucher->update([
+                        'is_used'             => true,
+                        'used_at'             => now(),
+                        'used_transaction_id' => $transaction->id,
+                    ]);
+                } else {
+                    $newCount = $appliedVoucher->used_count + 1;
+                    $reachedMax = $appliedVoucher->max_uses && $newCount >= $appliedVoucher->max_uses;
+                    $appliedVoucher->update([
+                        'used_count' => $newCount,
+                        'is_used'    => $reachedMax,
+                        'used_at'             => now(),
+                        'used_transaction_id' => $transaction->id,
+                    ]);
+                }
+            }
+
             if ($isPayLater) {
                 Receivable::create([
                     'customer_id' => $request->customer_id,
@@ -636,13 +740,15 @@ class TransactionController extends Controller
             return $transaction->fresh(['customer']);
         });
 
-        if ($paymentGateway) {
+        // Dual payment dan QRIS statis tidak butuh API call ke gateway —
+        // konfirmasi dilakukan manual oleh kasir. Langsung redirect ke struk.
+        if ($paymentGateway && ! $isDualPayment) {
             try {
                 $paymentResponse = $paymentGatewayManager->createPayment($transaction, $paymentGateway, $paymentSetting);
 
                 $transaction->update([
                     'payment_reference' => $paymentResponse['reference'] ?? null,
-                    'payment_url' => $paymentResponse['payment_url'] ?? null,
+                    'payment_url'       => $paymentResponse['payment_url'] ?? null,
                 ]);
             } catch (PaymentGatewayException $exception) {
                 return redirect()
@@ -657,7 +763,7 @@ class TransactionController extends Controller
     public function print($invoice)
     {
         // get transaction
-        $transaction = Transaction::with('details.product', 'details.pricingRule', 'cashier', 'customer', 'receivable', 'bankAccount')
+        $transaction = Transaction::with('details.product', 'details.promo', 'cashier', 'customer', 'receivable', 'bankAccount')
             ->where('invoice', $invoice)
             ->firstOrFail();
 
@@ -785,5 +891,33 @@ class TransactionController extends Controller
         return redirect()
             ->back()
             ->with('success', "Pembayaran untuk invoice {$transaction->invoice} berhasil dikonfirmasi.");
+    }
+
+    /**
+     * Update payment status manually — hanya untuk admin/yang punya permission
+     */
+    public function updateStatus(Request $request, Transaction $transaction)
+    {
+        $allowed = ['paid', 'pending', 'failed', 'expired', 'unpaid', 'partial'];
+        $status  = $request->input('payment_status');
+
+        if (! in_array($status, $allowed)) {
+            return redirect()->back()->with('error', 'Status tidak valid.');
+        }
+
+        $before = $transaction->payment_status;
+
+        $transaction->update(['payment_status' => $status]);
+
+        $this->auditLogService->log(
+            event: 'transaction.status_updated',
+            module: 'transactions',
+            auditable: $transaction,
+            description: "Status pembayaran invoice {$transaction->invoice} diubah dari {$before} menjadi {$status}.",
+            before: ['payment_status' => $before],
+            after:  ['payment_status' => $status],
+        );
+
+        return redirect()->back()->with('success', "Status berhasil diubah menjadi {$status}.");
     }
 }

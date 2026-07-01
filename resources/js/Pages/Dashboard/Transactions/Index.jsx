@@ -50,7 +50,9 @@ export default function Index({
     carts = [],
     carts_total = 0,
     heldCarts = [],
+    activeCustomer = null,
     customers = [],
+    generalVouchers = [],
     products = [],
     categories = [],
     initialPricingPreview = { items: [], summary: {} },
@@ -75,12 +77,18 @@ export default function Index({
     const [isSearching, setIsSearching] = useState(false);
     const [addingProductId, setAddingProductId] = useState(null);
     const [removingItemId, setRemovingItemId] = useState(null);
-    const [selectedCustomer, setSelectedCustomer] = useState(null);
+    // Pelanggan diisi dari keranjang aktif (kalau ada) supaya tidak
+    // hilang waktu kasir pindah halaman atau refresh browser.
+    const [selectedCustomer, setSelectedCustomer] = useState(activeCustomer);
     const [pricingPreview, setPricingPreview] = useState(initialPricingPreview);
     const [isLoadingPricing, setIsLoadingPricing] = useState(false);
     const [discountInput, setDiscountInput] = useState("");
     const [redeemPointsInput, setRedeemPointsInput] = useState("");
     const [cashInput, setCashInput] = useState("");
+    // Dual payment (Tunai + QRIS)
+    const [dualPayment, setDualPayment] = useState(false);
+    const [dualCashInput, setDualCashInput] = useState("");
+    const [dualQrisInput, setDualQrisInput] = useState("");
     const [shippingInput, setShippingInput] = useState("");
     const [paymentMethod, setPaymentMethod] = useState(
         defaultPaymentGateway ?? "cash",
@@ -91,11 +99,13 @@ export default function Index({
     // Modal QRIS — tampil sebelum transaksi final disubmit
     const [showQrisModal, setShowQrisModal] = useState(false);
     const [qrisPaymentUrl, setQrisPaymentUrl] = useState(null); // untuk gateway dinamis
+    const [dualStep, setDualStep] = useState(1); // 1 = terima tunai, 2 = scan QRIS
     const [mobileView, setMobileView] = useState("products"); // 'products' | 'cart'
     const [numpadOpen, setNumpadOpen] = useState(false);
     const [showShortcuts, setShowShortcuts] = useState(false);
     const [selectedBankAccount, setSelectedBankAccount] = useState(null);
-    const [selectedVoucherId, setSelectedVoucherId] = useState("");
+    const [selectedVoucherIds, setSelectedVoucherIds] = useState([]);
+    const [promoCodeInput, setPromoCodeInput] = useState("");
     const [openingCashInput, setOpeningCashInput] = useState("");
     const [shiftNotesInput, setShiftNotesInput] = useState("");
     const normalizedSelectedCategory =
@@ -121,6 +131,16 @@ export default function Index({
     useEffect(() => {
         setPricingPreview(initialPricingPreview);
     }, [initialPricingPreview]);
+
+    useEffect(() => {
+        setSelectedCustomer(activeCustomer);
+    }, [activeCustomer]);
+
+    // Sync selectedCustomer ketika activeCustomer berubah dari props
+    // (misal setelah resume transaksi ditahan — customer ikut ter-restore)
+    useEffect(() => {
+        setSelectedCustomer(activeCustomer);
+    }, [activeCustomer]);
 
     // Barcode scanner integration
     const handleBarcodeScan = useCallback(
@@ -185,9 +205,12 @@ export default function Index({
         [pricingPreview],
     );
     const isCashPayment = !payLater && paymentMethod === "cash";
+    const isDualPayment = !payLater && dualPayment && paymentMethod === "cash";
+    const dualCash = useMemo(() => Math.max(0, Number(dualCashInput) || 0), [dualCashInput]);
+    const dualQris = useMemo(() => Math.max(0, Number(dualQrisInput) || 0), [dualQrisInput]);
     const cash = useMemo(
-        () => (isCashPayment ? Math.max(0, Number(cashInput) || 0) : payable),
-        [cashInput, isCashPayment, payable],
+        () => (isCashPayment ? (isDualPayment ? dualCash : Math.max(0, Number(cashInput) || 0)) : payable),
+        [cashInput, isCashPayment, isDualPayment, dualCash, payable],
     );
     const cartCount = useMemo(
         () => carts.reduce((total, item) => total + Number(item.qty), 0),
@@ -226,7 +249,7 @@ export default function Index({
                 discount,
                 shipping_cost: shipping,
                 redeem_points: Number(redeemPointsInput || 0),
-                customer_voucher_id: selectedVoucherId || null,
+                customer_voucher_ids: selectedVoucherIds,
             })
             .then((response) => {
                 if (!cancelled) {
@@ -255,13 +278,13 @@ export default function Index({
         discount,
         shipping,
         redeemPointsInput,
-        selectedVoucherId,
+        selectedVoucherIds,
     ]);
 
     useEffect(() => {
         if (!selectedCustomer?.is_loyalty_member) {
             setRedeemPointsInput("");
-            setSelectedVoucherId("");
+            // Jangan reset voucher — voucher umum (all/non_member_only) tetap valid untuk non-member
         }
     }, [selectedCustomer?.id, selectedCustomer?.is_loyalty_member]);
 
@@ -272,10 +295,36 @@ export default function Index({
             ),
         );
 
-        if (selectedVoucherId && !eligibleVoucherIds.has(selectedVoucherId)) {
-            setSelectedVoucherId("");
+        setSelectedVoucherIds((prev) => {
+            const filtered = prev.filter((id) => eligibleVoucherIds.has(id));
+            return filtered.length === prev.length ? prev : filtered;
+        });
+    }, [pricingPreview?.eligible_vouchers]);
+
+    // Terapkan kode promo yang diketik manual di kolom "Punya Kode Promo?".
+    // Bisa dipanggil lewat tombol Pakai maupun tekan Enter di input.
+    // Voucher yang ketemu ditambahkan ke daftar voucher terpilih (mendukung
+    // lebih dari satu voucher aktif sekaligus), tidak menggantikan yang lama.
+    const applyPromoCode = useCallback(() => {
+        const code = promoCodeInput.trim();
+        if (!code) return;
+
+        const match = (pricingPreview?.eligible_vouchers || []).find(
+            (v) => (v.code || "").toLowerCase() === code.toLowerCase(),
+        );
+
+        if (!match) {
+            toast.error(`Kode promo "${code}" tidak ditemukan atau tidak berlaku`);
+            return;
         }
-    }, [pricingPreview?.eligible_vouchers, selectedVoucherId]);
+
+        const matchId = String(match.id);
+        setSelectedVoucherIds((prev) =>
+            prev.includes(matchId) ? prev : [...prev, matchId],
+        );
+        setPromoCodeInput("");
+        toast.success(`Voucher "${match.name}" diterapkan`);
+    }, [promoCodeInput, pricingPreview?.eligible_vouchers]);
 
     // Payment options
     const paymentOptions = useMemo(() => {
@@ -379,7 +428,7 @@ export default function Index({
 
         router.post(
             route("transactions.hold"),
-            { label },
+            { label, customer_id: selectedCustomer?.id ?? null },
             {
                 preserveScroll: true,
                 onSuccess: () => {
@@ -390,6 +439,24 @@ export default function Index({
                     toast.error(errors?.message || "Gagal menahan transaksi");
                     setIsHolding(false);
                 },
+            },
+        );
+    };
+
+    // Simpan pelanggan terpilih ke keranjang aktif di server, supaya
+    // tetap "ingat" walau kasir pindah halaman atau refresh browser.
+    const handleSelectCustomer = (customer) => {
+        setSelectedCustomer(customer);
+
+        if (carts.length === 0) return;
+
+        router.post(
+            route("transactions.cart.set-customer"),
+            { customer_id: customer?.id ?? null },
+            {
+                preserveScroll: true,
+                preserveState: true,
+                only: [],
             },
         );
     };
@@ -478,9 +545,20 @@ export default function Index({
             return;
         }
 
-        if (!payLater && isCashPayment && cash < payable) {
+        if (!payLater && isCashPayment && !isDualPayment && cash < payable) {
             toast.error("Jumlah pembayaran kurang dari total");
             return;
+        }
+
+        if (isDualPayment) {
+            if (dualCash <= 0 && dualQris <= 0) {
+                toast.error("Isi nominal Tunai dan QRIS");
+                return;
+            }
+            if (dualCash + dualQris < payable) {
+                toast.error("Total Tunai + QRIS kurang dari total belanja");
+                return;
+            }
         }
 
         const isBankTransfer = paymentMethod === "bank_transfer";
@@ -496,59 +574,102 @@ export default function Index({
             return;
         }
 
+        // Dual payment → tampilkan modal step 1 (terima tunai)
+        if (isDualPayment) {
+            setDualStep(1);
+            setShowQrisModal(true);
+            return;
+        }
+
         // Lainnya langsung submit
         doSubmitTransaction();
     };
 
     // Submit transaksi ke server (dipanggil setelah konfirmasi dari modal)
-    const doSubmitTransaction = () => {
+    const doSubmitTransaction = async () => {
         setIsSubmitting(true);
 
-        router.post(
-            route("transactions.store"),
-            {
+        try {
+            const response = await axios.post(route("transactions.store"), {
                 customer_id: selectedCustomer.id,
                 discount,
                 redeem_points: Number(redeemPointsInput || 0),
-                customer_voucher_id: selectedVoucherId || null,
+                customer_voucher_ids: selectedVoucherIds,
                 shipping_cost: shipping,
                 grand_total: payable,
-                cash: isCashPayment ? cash : payable,
-                change: isCashPayment ? Math.max(cash - payable, 0) : 0,
+                cash: isCashPayment ? (isDualPayment ? dualCash : cash) : payable,
+                change: isCashPayment && !isDualPayment ? Math.max(cash - payable, 0) : 0,
+                dual_cash: isDualPayment ? dualCash : 0,
+                dual_qris: isDualPayment ? dualQris : 0,
                 payment_gateway: payLater
                     ? null
-                    : isCashPayment
-                      ? null
-                      : paymentMethod,
+                    : isDualPayment
+                      ? "dual_cash_qris"
+                      : isCashPayment
+                        ? null
+                        : paymentMethod,
                 bank_account_id: paymentMethod === "bank_transfer"
                     ? selectedBankAccount?.id
                     : null,
                 pay_later: payLater,
                 due_date: dueDate,
-            },
-            {
-                onSuccess: () => {
-                    setShowQrisModal(false);
-                    setQrisPaymentUrl(null);
-                    setDiscountInput("");
-                    setRedeemPointsInput("");
-                    setCashInput("");
-                    setShippingInput("");
-                    setSelectedCustomer(null);
-                    setSelectedBankAccount(null);
-                    setSelectedVoucherId("");
-                    setPaymentMethod(defaultPaymentGateway ?? "cash");
-                    setPayLater(false);
-                    setDueDate("");
-                    setIsSubmitting(false);
-                    toast.success("Transaksi berhasil!");
-                },
-                onError: () => {
-                    setIsSubmitting(false);
-                    toast.error("Gagal menyimpan transaksi");
-                },
-            },
-        );
+            }, {
+                headers: { "X-Inertia": "true", "X-Inertia-Version": "1" },
+                maxRedirects: 0,
+                validateStatus: (s) => s < 500,
+            });
+
+            // Inertia redirect datang sebagai 409 dengan header X-Inertia-Location
+            // atau 302 redirect — tangkap URL invoice dan redirect
+            const redirectUrl =
+                response.headers?.["x-inertia-location"] ||
+                response.request?.responseURL ||
+                null;
+
+            if (redirectUrl && redirectUrl.includes("/print")) {
+                toast.success("Transaksi berhasil!");
+                window.location.href = redirectUrl;
+            } else {
+                // Fallback: pakai router.post biasa
+                router.post(
+                    route("transactions.store"),
+                    {
+                        customer_id: selectedCustomer.id,
+                        discount,
+                        redeem_points: Number(redeemPointsInput || 0),
+                        customer_voucher_ids: selectedVoucherIds,
+                        shipping_cost: shipping,
+                        grand_total: payable,
+                        cash: isCashPayment ? (isDualPayment ? dualCash : cash) : payable,
+                        change: isCashPayment && !isDualPayment ? Math.max(cash - payable, 0) : 0,
+                        dual_cash: isDualPayment ? dualCash : 0,
+                        dual_qris: isDualPayment ? dualQris : 0,
+                        payment_gateway: payLater
+                            ? null
+                            : isDualPayment
+                              ? "dual_cash_qris"
+                              : isCashPayment
+                                ? null
+                                : paymentMethod,
+                        bank_account_id: paymentMethod === "bank_transfer"
+                            ? selectedBankAccount?.id
+                            : null,
+                        pay_later: payLater,
+                        due_date: dueDate,
+                    },
+                    {
+                        onSuccess: () => toast.success("Transaksi berhasil!"),
+                        onError: () => {
+                            setIsSubmitting(false);
+                            toast.error("Gagal menyimpan transaksi");
+                        },
+                    },
+                );
+            }
+        } catch (err) {
+            setIsSubmitting(false);
+            toast.error("Gagal menyimpan transaksi");
+        }
     };
 
     // Filter products including out of stock
@@ -727,7 +848,7 @@ export default function Index({
                         <CustomerSelect
                             customers={customers}
                             selected={selectedCustomer}
-                            onSelect={setSelectedCustomer}
+                            onSelect={handleSelectCustomer}
                             placeholder="Pilih pelanggan..."
                             error={errors?.customer_id}
                             label="Pelanggan"
@@ -798,7 +919,7 @@ export default function Index({
                                                     0,
                                             );
                                             const pricingRule =
-                                                pricingItem?.pricing_rule;
+                                                pricingItem?.promo;
 
                                             return (
                                                 <div
@@ -997,14 +1118,18 @@ export default function Index({
                                     {paymentOptions.map((method) => (
                                         <button
                                             key={method.value}
-                                            onClick={() =>
-                                                !payLater &&
-                                                setPaymentMethod(method.value)
-                                            }
+                                            onClick={() => {
+                                                if (payLater) return;
+                                                setPaymentMethod(method.value);
+                                                setDualPayment(false);
+                                                setDualCashInput("");
+                                                setDualQrisInput("");
+                                                setCashInput("");
+                                            }}
                                             disabled={payLater}
                                             className={`p-3 rounded-xl border-2 transition-all flex items-center gap-2 ${
                                                 paymentMethod ===
-                                                    method.value && !payLater
+                                                    method.value && !payLater && !dualPayment
                                                     ? "border-primary-500 bg-primary-50 dark:bg-primary-950/30"
                                                     : "border-slate-200 dark:border-slate-700 hover:border-slate-300 dark:hover:border-slate-600"
                                             } ${payLater ? "opacity-50 cursor-not-allowed" : ""}`}
@@ -1013,7 +1138,7 @@ export default function Index({
                                                 className={`w-8 h-8 rounded-lg flex items-center justify-center ${
                                                     paymentMethod ===
                                                         method.value &&
-                                                    !payLater
+                                                    !payLater && !dualPayment
                                                         ? "bg-primary-500 text-white"
                                                         : "bg-slate-100 dark:bg-slate-800 text-slate-500"
                                                 }`}
@@ -1033,7 +1158,7 @@ export default function Index({
                                                 <p
                                                     className={`text-sm font-semibold ${
                                                         paymentMethod ===
-                                                        method.value
+                                                        method.value && !dualPayment
                                                             ? "text-primary-700 dark:text-primary-300"
                                                             : "text-slate-700 dark:text-slate-300"
                                                     }`}
@@ -1127,34 +1252,107 @@ export default function Index({
                                 />
                             )}
 
-                            {/* Quick Amounts - Only for cash */}
+                            {/* Tunai / Tunai+QRIS section */}
                             {paymentMethod === "cash" && (
-                                <div>
-                                    <label className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-2">
-                                        Nominal Cepat
-                                    </label>
-                                    <div className="grid grid-cols-4 gap-2">
-                                        {[10000, 20000, 50000, 100000].map(
-                                            (amt) => (
-                                                <button
-                                                    key={amt}
-                                                    onClick={() =>
-                                                        setCashInput(
-                                                            String(amt),
-                                                        )
-                                                    }
-                                                    className={`py-2 px-1 rounded-lg text-xs font-semibold transition-all ${
-                                                        Number(cashInput) ===
-                                                        amt
-                                                            ? "bg-primary-500 text-white"
-                                                            : "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-200"
-                                                    }`}
-                                                >
-                                                    {formatPrice(amt)}
-                                                </button>
-                                            ),
-                                        )}
-                                    </div>
+                                <div className="space-y-3">
+                                    <button
+                                        onClick={() => {
+                                            setDualPayment(!dualPayment);
+                                            setDualCashInput("");
+                                            setDualQrisInput("");
+                                            setCashInput("");
+                                        }}
+                                        className={`w-full p-3 rounded-xl border-2 transition-all text-left ${
+                                            dualPayment
+                                                ? "border-primary-500 bg-primary-50 dark:bg-primary-950/30"
+                                                : "border-slate-200 dark:border-slate-700 hover:border-slate-300"
+                                        }`}
+                                    >
+                                        <p className={`text-sm font-semibold ${dualPayment ? "text-primary-700 dark:text-primary-300" : "text-slate-700 dark:text-slate-300"}`}>
+                                            Tunai + QRIS
+                                        </p>
+                                        <p className="text-xs text-slate-400">Bayar split dua metode</p>
+                                    </button>
+
+                                    {dualPayment ? (
+                                        <div className="space-y-3">
+                                            <div>
+                                                <label className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">
+                                                    Bayar Tunai
+                                                </label>
+                                                <input
+                                                    type="text"
+                                                    inputMode="numeric"
+                                                    value={dualCashInput}
+                                                    onChange={(e) => {
+                                                        const v = e.target.value.replace(/[^0-9]/g, "");
+                                                        setDualCashInput(v);
+                                                        const sisa = Math.max(0, payable - (Number(v) || 0));
+                                                        setDualQrisInput(String(sisa));
+                                                    }}
+                                                    placeholder="Nominal tunai"
+                                                    className="w-full h-11 px-4 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500"
+                                                />
+                                            </div>
+                                            <div>
+                                                <label className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1">
+                                                    Bayar QRIS
+                                                </label>
+                                                <input
+                                                    type="text"
+                                                    inputMode="numeric"
+                                                    value={dualQrisInput}
+                                                    onChange={(e) => {
+                                                        const v = e.target.value.replace(/[^0-9]/g, "");
+                                                        setDualQrisInput(v);
+                                                        const sisa = Math.max(0, payable - (Number(v) || 0));
+                                                        setDualCashInput(String(sisa));
+                                                    }}
+                                                    placeholder="Nominal QRIS"
+                                                    className="w-full h-11 px-4 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500"
+                                                />
+                                            </div>
+                                            <div className="rounded-xl bg-primary-50 dark:bg-primary-950/30 border border-primary-200 dark:border-primary-800 p-3 space-y-1 text-xs">
+                                                <div className="flex justify-between text-slate-600 dark:text-slate-400">
+                                                    <span>Total belanja</span>
+                                                    <span className="font-semibold">{formatPrice(payable)}</span>
+                                                </div>
+                                                <div className="flex justify-between text-slate-600 dark:text-slate-400">
+                                                    <span>Tunai</span>
+                                                    <span>{formatPrice(dualCash)}</span>
+                                                </div>
+                                                <div className="flex justify-between text-slate-600 dark:text-slate-400">
+                                                    <span>QRIS</span>
+                                                    <span>{formatPrice(dualQris)}</span>
+                                                </div>
+                                                <div className={`flex justify-between font-bold border-t pt-1 ${dualCash + dualQris >= payable ? "text-success-600 dark:text-success-400" : "text-danger-600 dark:text-danger-400"}`}>
+                                                    <span>{dualCash + dualQris >= payable ? "Cukup" : "Kurang"}</span>
+                                                    <span>{dualCash + dualQris >= payable ? `Kembalian ${formatPrice(dualCash + dualQris - payable)}` : `Kurang ${formatPrice(payable - dualCash - dualQris)}`}</span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    ) : (
+                                        <div>
+                                            <label className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-2">
+                                                Nominal Cepat
+                                            </label>
+                                            <div className="grid grid-cols-4 gap-2">
+                                                {[10000, 20000, 50000, 100000].map((amt) => (
+                                                    <button
+                                                        key={amt}
+                                                        onClick={() => setCashInput(String(amt))}
+                                                        className={`py-2 px-1 rounded-lg text-xs font-semibold transition-all ${
+                                                            Number(cashInput) === amt
+                                                                ? "bg-primary-500 text-white"
+                                                                : "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-200"
+                                                        }`}
+                                                    >
+                                                        {formatPrice(amt)}
+                                                    </button>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    )}
                                 </div>
                             )}
 
@@ -1226,40 +1424,167 @@ export default function Index({
                                 </div>
                             )}
 
-                            {selectedCustomer?.is_loyalty_member &&
-                                (pricingPreview?.eligible_vouchers || [])
-                                    .length > 0 && (
-                                    <div>
-                                        <label className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-2">
-                                            Voucher Customer
-                                        </label>
-                                        <select
-                                            value={selectedVoucherId}
+                            {/* Kode Promo — ketik manual lalu tekan Enter atau klik Pakai */}
+                            {(pricingPreview?.eligible_vouchers || []).length > 0 && (
+                                <div>
+                                    <label className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1.5">
+                                        Punya Kode Promo?
+                                    </label>
+                                    <div className="flex gap-2">
+                                        <input
+                                            type="text"
+                                            value={promoCodeInput}
                                             onChange={(e) =>
-                                                setSelectedVoucherId(
-                                                    e.target.value,
-                                                )
+                                                setPromoCodeInput(e.target.value.toUpperCase())
                                             }
-                                            className="w-full h-10 px-4 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500"
+                                            onKeyDown={(e) => {
+                                                if (e.key === "Enter") {
+                                                    e.preventDefault();
+                                                    applyPromoCode();
+                                                }
+                                            }}
+                                            placeholder="MASUKKAN KODE PROMO"
+                                            className="flex-1 h-10 px-3 rounded-xl border border-slate-200 dark:border-slate-700
+                                                bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 text-sm font-mono
+                                                tracking-wide focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500
+                                                transition-all"
+                                        />
+                                        <button
+                                            type="button"
+                                            onClick={applyPromoCode}
+                                            disabled={!promoCodeInput.trim()}
+                                            className="px-4 h-10 rounded-xl text-sm font-semibold bg-primary-500 text-white
+                                                hover:bg-primary-600 disabled:opacity-50 disabled:cursor-not-allowed
+                                                transition-colors shrink-0"
                                         >
-                                            <option value="">
-                                                Tanpa voucher
-                                            </option>
-                                            {(
-                                                pricingPreview?.eligible_vouchers ||
-                                                []
-                                            ).map((voucher) => (
-                                                <option
-                                                    key={voucher.id}
-                                                    value={voucher.id}
-                                                >
-                                                    {voucher.code} -{" "}
-                                                    {voucher.name}
-                                                </option>
-                                            ))}
-                                        </select>
+                                            Pakai
+                                        </button>
                                     </div>
-                                )}
+                                </div>
+                            )}
+
+                            {/* Voucher — personal & umum, semua jenis diskon (termasuk BOGO).
+                                Tetap tampil walau belum pilih pelanggan, karena voucher umum
+                                non_member_only/all tetap berlaku untuk transaksi walk-in.
+                                Bisa pilih lebih dari satu voucher sekaligus. */}
+                            {(pricingPreview?.eligible_vouchers || []).length > 0 && (
+                                <div>
+                                    <label className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1.5">
+                                        Voucher Tersedia
+                                        {selectedCustomer?.is_loyalty_member && (
+                                            <span className="ml-1.5 px-1.5 py-0.5 rounded text-[10px] bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">Member</span>
+                                        )}
+                                    </label>
+                                    <div className="space-y-1.5">
+                                        {/* Opsi tanpa voucher — bersihkan semua voucher yang dipilih */}
+                                        <button
+                                            type="button"
+                                            onClick={() => setSelectedVoucherIds([])}
+                                            className={`w-full flex items-center justify-between px-3 py-2 rounded-xl border-2 transition-all text-left ${
+                                                selectedVoucherIds.length === 0
+                                                    ? "border-slate-400 bg-slate-50 dark:bg-slate-800"
+                                                    : "border-slate-200 dark:border-slate-700 hover:border-slate-300"
+                                            }`}
+                                        >
+                                            <span className="text-sm text-slate-500 dark:text-slate-400">Tanpa voucher</span>
+                                        </button>
+
+                                        {(pricingPreview?.eligible_vouchers || []).map((v) => {
+                                            const isSelected = selectedVoucherIds.includes(String(v.id));
+                                            const isPersonal = (v.voucher_type ?? "personal") === "personal";
+                                            const isBogo = v.discount_kind === "buy_x_get_y";
+                                            const isQtyBreak = v.discount_kind === "qty_break";
+                                            const typeBadge = isPersonal
+                                                ? { label: "Personal", cls: "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400" }
+                                                : v.voucher_type === "member_only"
+                                                ? { label: "Member", cls: "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400" }
+                                                : v.voucher_type === "non_member_only"
+                                                ? { label: "Non-Member", cls: "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400" }
+                                                : { label: "Umum", cls: "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400" };
+
+                                            const discountLabel = isBogo
+                                                ? (() => {
+                                                      const buyQty = v.buy_qty ?? 1;
+                                                      const getQty = v.get_qty ?? 1;
+                                                      const pct = v.get_discount_percent ?? 100;
+                                                      const suffix = pct >= 100 ? "Gratis" : `Diskon ${pct}%`;
+                                                      return `Beli ${buyQty} ${suffix} ${getQty}`;
+                                                  })()
+                                                : isQtyBreak
+                                                ? "Grosir Bertingkat"
+                                                : v.discount_type === "percentage"
+                                                ? `${v.discount_value}%`
+                                                : `-Rp${Number(v.discount_value).toLocaleString("id-ID")}`;
+
+                                            const scopeLabel = (isBogo || isQtyBreak)
+                                                ? (v.target_type === "product"
+                                                      ? v.product_name || "Produk tertentu"
+                                                      : v.target_type === "category"
+                                                      ? v.category_name || "Kategori tertentu"
+                                                      : "Semua produk")
+                                                : null;
+
+                                            const toggleVoucher = () =>
+                                                setSelectedVoucherIds((prev) =>
+                                                    isSelected
+                                                        ? prev.filter((id) => id !== String(v.id))
+                                                        : [...prev, String(v.id)],
+                                                );
+
+                                            return (
+                                                <button
+                                                    key={v.id}
+                                                    type="button"
+                                                    onClick={toggleVoucher}
+                                                    className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl border-2 transition-all text-left ${
+                                                        isSelected
+                                                            ? "border-primary-500 bg-primary-50 dark:bg-primary-950/30"
+                                                            : "border-slate-200 dark:border-slate-700 hover:border-primary-300 dark:hover:border-primary-800"
+                                                    }`}
+                                                >
+                                                    <div className="flex items-center gap-2 min-w-0">
+                                                        <div
+                                                            className={`w-5 h-5 shrink-0 rounded-md border-2 flex items-center justify-center ${
+                                                                isSelected
+                                                                    ? "border-primary-500 bg-primary-500"
+                                                                    : "border-slate-300 dark:border-slate-600"
+                                                            }`}
+                                                        >
+                                                            {isSelected && (
+                                                                <IconCheck size={13} className="text-white" />
+                                                            )}
+                                                        </div>
+                                                        <div className="min-w-0">
+                                                            <div className="flex items-center gap-1.5 mb-0.5">
+                                                                <p className={`text-sm font-semibold truncate ${isSelected ? "text-primary-700 dark:text-primary-300" : "text-slate-800 dark:text-white"}`}>
+                                                                    {v.name}
+                                                                </p>
+                                                                <span className={`shrink-0 text-[10px] font-medium px-1.5 py-0.5 rounded ${typeBadge.cls}`}>
+                                                                    {typeBadge.label}
+                                                                </span>
+                                                                {isBogo && (
+                                                                    <span className="shrink-0 text-[10px] font-medium px-1.5 py-0.5 rounded bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-400">
+                                                                        BOGO
+                                                                    </span>
+                                                                )}
+                                                            </div>
+                                                            <p className="text-xs text-slate-400 truncate">
+                                                                {v.code}
+                                                                {scopeLabel && ` · ${scopeLabel}`}
+                                                                {v.minimum_order > 0 && ` · min Rp${Number(v.minimum_order).toLocaleString("id-ID")}`}
+                                                                {v.ends_at && ` · s/d ${new Date(v.ends_at).toLocaleDateString("id-ID")}`}
+                                                            </p>
+                                                        </div>
+                                                    </div>
+                                                    <span className={`text-xs font-bold shrink-0 ml-2 text-right ${isSelected ? "text-primary-600 dark:text-primary-400" : "text-emerald-600 dark:text-emerald-400"}`}>
+                                                        {discountLabel}
+                                                    </span>
+                                                </button>
+                                            );
+                                        })}
+                                    </div>
+                                </div>
+                            )}
 
                             <div>
                                 <label className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-2">
@@ -1333,8 +1658,8 @@ export default function Index({
                                 </div>
                             </div>
 
-                            {/* Cash Input - Only for cash */}
-                            {paymentMethod === "cash" && (
+                            {/* Input Tunai - Hanya untuk tunai, disembunyikan saat dual payment */}
+                            {paymentMethod === "cash" && !dualPayment && (
                                 <div>
                                     <label className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-2">
                                         Jumlah Bayar (Rp)
@@ -1479,14 +1804,18 @@ export default function Index({
                                 !selectedCustomer ||
                                 (!payLater &&
                                     paymentMethod === "cash" &&
+                                    !isDualPayment &&
                                     cash < payable) ||
+                                (!payLater &&
+                                    isDualPayment &&
+                                    dualCash + dualQris < payable) ||
                                 isLoadingPricing ||
                                 isSubmitting
                             }
                             className={`w-full h-12 rounded-xl text-sm font-semibold flex items-center justify-center gap-2 transition-all ${
                                 carts.length &&
                                 selectedCustomer &&
-                                (paymentMethod !== "cash" || cash >= payable) &&
+                                (paymentMethod !== "cash" || (isDualPayment ? dualCash + dualQris >= payable : cash >= payable)) &&
                                 !isLoadingPricing
                                     ? "bg-gradient-to-r from-primary-500 to-primary-600 hover:from-primary-600 hover:to-primary-700 text-white shadow-lg shadow-primary-500/30"
                                     : "bg-slate-200 dark:bg-slate-800 text-slate-400 cursor-not-allowed"
@@ -1503,9 +1832,9 @@ export default function Index({
                                             : !selectedCustomer
                                               ? "Pilih Pelanggan"
                                               : paymentMethod === "cash" &&
-                                                  cash < payable
+                                                  (isDualPayment ? dualCash + dualQris < payable : cash < payable)
                                                 ? `Kurang ${formatPrice(
-                                                      payable - cash,
+                                                      isDualPayment ? payable - (dualCash + dualQris) : payable - cash,
                                                   )}`
                                                 : isLoadingPricing
                                                   ? "Menghitung Promo..."
@@ -1531,7 +1860,9 @@ export default function Index({
                             <div className="flex items-center gap-2">
                                 <IconQrcode size={20} className="text-blue-500" />
                                 <h3 className="font-bold text-slate-800 dark:text-white text-base">
-                                    {paymentMethod === "qris_static"
+                                    {isDualPayment
+                                        ? dualStep === 1 ? "Step 1: Terima Tunai" : "Step 2: Scan QRIS"
+                                        : paymentMethod === "qris_static"
                                         ? "Scan QRIS untuk Membayar"
                                         : paymentMethod === "doku"
                                         ? "Pembayaran DOKU QRIS"
@@ -1544,7 +1875,7 @@ export default function Index({
                             </div>
                             {!isSubmitting && (
                                 <button
-                                    onClick={() => setShowQrisModal(false)}
+                                    onClick={() => { setShowQrisModal(false); setDualStep(1); }}
                                     className="w-8 h-8 flex items-center justify-center rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400"
                                 >
                                     <IconX size={18} />
@@ -1552,14 +1883,80 @@ export default function Index({
                             )}
                         </div>
 
+                        {/* Step indicator - dual payment only */}
+                        {isDualPayment && (
+                            <div className="flex items-center gap-0 px-5 pt-4">
+                                <div className={`flex items-center justify-center w-7 h-7 rounded-full text-xs font-bold ${dualStep >= 1 ? "bg-primary-500 text-white" : "bg-slate-200 text-slate-500"}`}>1</div>
+                                <div className={`flex-1 h-1 ${dualStep >= 2 ? "bg-primary-500" : "bg-slate-200"}`} />
+                                <div className={`flex items-center justify-center w-7 h-7 rounded-full text-xs font-bold ${dualStep >= 2 ? "bg-primary-500 text-white" : "bg-slate-200 text-slate-500"}`}>2</div>
+                            </div>
+                        )}
+
                         <div className="p-5 space-y-4">
                             {/* Nominal */}
                             <div className="rounded-xl bg-blue-50 dark:bg-blue-950/30 border border-blue-100 dark:border-blue-900/40 px-4 py-3 text-center">
-                                <p className="text-xs text-blue-500 dark:text-blue-400 mb-0.5">Total yang harus dibayar</p>
-                                <p className="text-2xl font-bold text-blue-700 dark:text-blue-300">
-                                    {formatPrice(payable)}
+                                <p className="text-xs text-blue-500 dark:text-blue-400 mb-0.5">
+                                    {isDualPayment && dualStep === 1 ? "Terima tunai dari pelanggan" : "Total yang harus dibayar"}
                                 </p>
+                                <p className="text-2xl font-bold text-blue-700 dark:text-blue-300">
+                                    {isDualPayment && dualStep === 1 ? formatPrice(dualCash) : isDualPayment && dualStep === 2 ? formatPrice(dualQris) : formatPrice(payable)}
+                                </p>
+                                {isDualPayment && (
+                                    <p className="text-xs text-slate-400 mt-1">
+                                        {dualStep === 1 ? `Sisa QRIS: ${formatPrice(dualQris)}` : `Sudah diterima tunai: ${formatPrice(dualCash)}`}
+                                    </p>
+                                )}
                             </div>
+
+                            {/* DUAL PAYMENT STEP 1 — terima tunai */}
+                            {isDualPayment && dualStep === 1 && (
+                                <div className="rounded-xl bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800 p-4 space-y-2">
+                                    <p className="text-sm font-semibold text-amber-800 dark:text-amber-300">Instruksi Kasir</p>
+                                    <ol className="text-xs text-amber-700 dark:text-amber-400 space-y-1 list-decimal list-inside">
+                                        <li>Minta pelanggan menyerahkan uang tunai</li>
+                                        <li>Terima <strong>{formatPrice(dualCash)}</strong> dari pelanggan</li>
+                                        <li>Klik <strong>"Tunai Diterima"</strong> untuk lanjut ke QRIS</li>
+                                    </ol>
+                                </div>
+                            )}
+
+                            {/* DUAL PAYMENT STEP 2 — scan QRIS, reuse existing QRIS UI */}
+                            {isDualPayment && dualStep === 2 && (
+                                <>
+                                    {qrisStaticConfig?.image_url ? (
+                                        <div className="flex flex-col items-center gap-3">
+                                            <div className="bg-white p-3 rounded-2xl border-2 border-slate-200 dark:border-slate-700 shadow-sm">
+                                                <img
+                                                    src={qrisStaticConfig.image_url}
+                                                    alt="QRIS Code"
+                                                    className="w-48 h-48 object-contain"
+                                                />
+                                            </div>
+                                            {qrisStaticConfig.merchant_name && (
+                                                <div className="text-center">
+                                                    <p className="text-sm font-semibold text-slate-800 dark:text-slate-200">{qrisStaticConfig.merchant_name}</p>
+                                                    {qrisStaticConfig.nmid && (
+                                                        <p className="text-xs text-slate-400">NMID: {qrisStaticConfig.nmid}</p>
+                                                    )}
+                                                </div>
+                                            )}
+                                            <ol className="text-xs text-slate-500 dark:text-slate-400 space-y-1 list-decimal list-inside self-start w-full">
+                                                <li>Buka e-wallet atau m-banking pelanggan</li>
+                                                <li>Scan QR code di atas</li>
+                                                <li>Masukkan nominal <strong>{formatPrice(dualQris)}</strong></li>
+                                                <li>Klik <strong>"Konfirmasi Pembayaran"</strong> setelah selesai</li>
+                                            </ol>
+                                        </div>
+                                    ) : (
+                                        <div className="rounded-xl border border-amber-200 bg-amber-50 dark:border-amber-900/40 dark:bg-amber-950/20 px-4 py-3 text-center">
+                                            <p className="text-sm text-amber-700 dark:text-amber-400">
+                                                Gambar QRIS belum diupload.<br />
+                                                Silakan upload di <strong>Pengaturan</strong>.
+                                            </p>
+                                        </div>
+                                    )}
+                                </>
+                            )}
 
                             {/* QRIS STATIS — tampilkan gambar QR */}
                             {paymentMethod === "qris_static" && (
@@ -1651,46 +2048,89 @@ export default function Index({
 
                         {/* Footer Buttons */}
                         <div className="px-5 pb-5 flex gap-2">
-                            {/* Tombol Buat Link — khusus gateway dinamis yang belum ada URL */}
-                            {["doku", "flip", "midtrans", "xendit"].includes(paymentMethod) && !qrisPaymentUrl && (
+
+                            {/* === DUAL PAYMENT BUTTONS === */}
+                            {isDualPayment && dualStep === 1 && (
                                 <button
-                                    onClick={doSubmitTransaction}
-                                    disabled={isSubmitting}
-                                    className="flex-1 h-11 rounded-xl bg-blue-500 hover:bg-blue-600 text-white font-semibold text-sm flex items-center justify-center gap-2 disabled:opacity-60"
+                                    onClick={() => setDualStep(2)}
+                                    className="flex-1 h-11 rounded-xl bg-amber-500 hover:bg-amber-600 text-white font-semibold text-sm flex items-center justify-center gap-2"
                                 >
-                                    {isSubmitting ? (
-                                        <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                                    ) : (
-                                        <>
-                                            <IconQrcode size={16} />
-                                            Buat Link Pembayaran
-                                        </>
-                                    )}
+                                    <IconCheck size={16} />
+                                    Tunai Diterima &rarr; Lanjut QRIS
                                 </button>
                             )}
 
-                            {/* Tombol Konfirmasi Pembayaran — QRIS statis atau gateway dinamis yg sudah ada URL */}
-                            {(paymentMethod === "qris_static" || qrisPaymentUrl) && (
-                                <button
-                                    onClick={doSubmitTransaction}
-                                    disabled={isSubmitting || (paymentMethod === "qris_static" && !qrisStaticConfig?.image_url)}
-                                    className="flex-1 h-11 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-white font-semibold text-sm flex items-center justify-center gap-2 disabled:opacity-60"
-                                >
-                                    {isSubmitting ? (
-                                        <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                                    ) : (
-                                        <>
-                                            <IconCheck size={16} />
-                                            Konfirmasi Pembayaran
-                                        </>
+                            {isDualPayment && dualStep === 2 && (
+                                <>
+                                    <button
+                                        onClick={() => setDualStep(1)}
+                                        disabled={isSubmitting}
+                                        className="h-11 px-4 rounded-xl border border-slate-200 dark:border-slate-700 text-sm font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 disabled:opacity-50"
+                                    >
+                                        &larr; Kembali
+                                    </button>
+                                    <button
+                                        onClick={doSubmitTransaction}
+                                        disabled={isSubmitting}
+                                        className="flex-1 h-11 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-white font-semibold text-sm flex items-center justify-center gap-2 disabled:opacity-60"
+                                    >
+                                        {isSubmitting ? (
+                                            <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                                        ) : (
+                                            <>
+                                                <IconCheck size={16} />
+                                                Konfirmasi Pembayaran
+                                            </>
+                                        )}
+                                    </button>
+                                </>
+                            )}
+
+                            {/* === QRIS STATIS & GATEWAY DINAMIS BUTTONS === */}
+                            {!isDualPayment && (
+                                <>
+                                    {/* Tombol Buat Link — khusus gateway dinamis yang belum ada URL */}
+                                    {["doku", "flip", "midtrans", "xendit"].includes(paymentMethod) && !qrisPaymentUrl && (
+                                        <button
+                                            onClick={doSubmitTransaction}
+                                            disabled={isSubmitting}
+                                            className="flex-1 h-11 rounded-xl bg-blue-500 hover:bg-blue-600 text-white font-semibold text-sm flex items-center justify-center gap-2 disabled:opacity-60"
+                                        >
+                                            {isSubmitting ? (
+                                                <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                                            ) : (
+                                                <>
+                                                    <IconQrcode size={16} />
+                                                    Buat Link Pembayaran
+                                                </>
+                                            )}
+                                        </button>
                                     )}
-                                </button>
+
+                                    {/* Tombol Konfirmasi Pembayaran — QRIS statis atau gateway dinamis yg sudah ada URL */}
+                                    {(paymentMethod === "qris_static" || qrisPaymentUrl) && (
+                                        <button
+                                            onClick={doSubmitTransaction}
+                                            disabled={isSubmitting || (paymentMethod === "qris_static" && !qrisStaticConfig?.image_url)}
+                                            className="flex-1 h-11 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-white font-semibold text-sm flex items-center justify-center gap-2 disabled:opacity-60"
+                                        >
+                                            {isSubmitting ? (
+                                                <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                                            ) : (
+                                                <>
+                                                    <IconCheck size={16} />
+                                                    Konfirmasi Pembayaran
+                                                </>
+                                            )}
+                                        </button>
+                                    )}
+                                </>
                             )}
 
                             {/* Tombol Batal */}
                             {!isSubmitting && (
                                 <button
-                                    onClick={() => setShowQrisModal(false)}
+                                    onClick={() => { setShowQrisModal(false); setDualStep(1); }}
                                     className="h-11 px-4 rounded-xl border border-slate-200 dark:border-slate-700 text-sm font-medium text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800"
                                 >
                                     Batal

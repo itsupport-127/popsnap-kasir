@@ -1,5 +1,5 @@
 import React from "react";
-import { Head, useForm } from "@inertiajs/react";
+import { Head, useForm, usePage } from "@inertiajs/react";
 import Button from "@/Components/Dashboard/Button";
 import {
     IconArrowLeft,
@@ -13,7 +13,14 @@ function InputError({ message }) {
     return <p className="mt-1 text-xs text-rose-500">{message}</p>;
 }
 
-export default function Form({ mode = "create", voucher = null, customers = [] }) {
+export default function Form({ mode = "create", voucher = null, customers = [], voucherTypes: voucherTypesProp = [] }) {
+    const { voucherTypes: voucherTypesPage = [] } = usePage().props;
+    const voucherTypes = voucherTypesProp.length ? voucherTypesProp : voucherTypesPage.length ? voucherTypesPage : [
+        { value: "personal",        label: "Personal (1 Pelanggan)" },
+        { value: "all",             label: "Umum (Semua Pelanggan)" },
+        { value: "member_only",     label: "Umum (Khusus Member)" },
+        { value: "non_member_only", label: "Umum (Khusus Non-Member)" },
+    ];
     const isEdit = mode === "edit";
     const { data, setData, post, put, processing, errors } = useForm({
         customer_id: voucher?.customer_id ? String(voucher.customer_id) : "",
@@ -91,6 +98,45 @@ export default function Form({ mode = "create", voucher = null, customers = [] }
                         </div>
 
                         <div className="grid gap-4 md:grid-cols-2">
+                            {/* Tipe Voucher */}
+                            <div className="md:col-span-2">
+                                <label className="mb-2 block text-sm font-medium text-slate-700 dark:text-slate-300">
+                                    Tipe Voucher <span className="text-danger-500">*</span>
+                                </label>
+                                <div className="grid grid-cols-2 gap-2">
+                                    {voucherTypes.map((t) => (
+                                        <button key={t.value} type="button"
+                                            onClick={() => setData("voucher_type", t.value)}
+                                            className={`px-3 py-2.5 rounded-xl border-2 text-sm font-medium transition-all text-left ${
+                                                data.voucher_type === t.value
+                                                    ? "border-primary-500 bg-primary-50 dark:bg-primary-950/30 text-primary-700 dark:text-primary-300"
+                                                    : "border-slate-200 dark:border-slate-700 text-slate-600 hover:border-slate-300"
+                                            }`}
+                                        >
+                                            {t.label}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+
+                            {/* Max Uses — hanya untuk voucher umum */}
+                            {data.voucher_type !== "personal" && (
+                                <div className="md:col-span-2">
+                                    <label className="mb-2 block text-sm font-medium text-slate-700 dark:text-slate-300">
+                                        Maks. Penggunaan <span className="text-slate-400 text-xs">(kosong = tidak terbatas)</span>
+                                    </label>
+                                    <input type="number" min="1"
+                                        value={data.max_uses}
+                                        onChange={(e) => setData("max_uses", e.target.value)}
+                                        placeholder="Contoh: 100"
+                                        className="h-11 w-full rounded-xl border border-slate-200 bg-slate-50 px-4 text-sm text-slate-800 outline-none transition focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
+                                    />
+                                    <InputError message={errors.max_uses} />
+                                </div>
+                            )}
+
+                            {/* Pelanggan — hanya untuk voucher personal */}
+                            {data.voucher_type === "personal" && (
                             <div className="md:col-span-2">
                                 <label className="mb-2 block text-sm font-medium text-slate-700 dark:text-slate-300">
                                     Pelanggan
@@ -114,6 +160,7 @@ export default function Form({ mode = "create", voucher = null, customers = [] }
                                 </select>
                                 <InputError message={errors.customer_id} />
                             </div>
+                            )}
 
                             <div>
                                 <label className="mb-2 block text-sm font-medium text-slate-700 dark:text-slate-300">

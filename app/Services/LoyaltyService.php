@@ -3,7 +3,7 @@
 namespace App\Services;
 
 use App\Models\Customer;
-use App\Models\CustomerVoucher;
+use App\Models\Promo;
 use App\Models\LoyaltyPointHistory;
 use App\Models\Setting;
 use App\Models\Transaction;
@@ -20,6 +20,10 @@ class LoyaltyService
     public const TIER_GOLD = 'gold';
 
     public const TIER_PLATINUM = 'platinum';
+
+    public function __construct(
+        private readonly PromoService $promoService
+    ) {}
 
     public function settings(): array
     {
@@ -179,13 +183,48 @@ class LoyaltyService
         $manualDiscountRequested = max(0, (int) ($options['manual_discount'] ?? 0));
         $shippingCost = max(0, (int) ($options['shipping_cost'] ?? 0));
         $requestedRedeemPoints = max(0, (int) ($options['redeem_points'] ?? 0));
-        $voucher = $options['voucher'] ?? null;
+        // Dukung banyak voucher sekaligus ('vouchers' = array) sekaligus tetap
+        // kompatibel dengan pemanggil lama yang masih kirim 'voucher' tunggal.
+        $manualPromos = collect($options['vouchers'] ?? [])
+            ->filter()
+            ->when(
+                empty($options['vouchers']) && ($options['voucher'] ?? $options['promo'] ?? null),
+                fn (Collection $c) => $c->push($options['voucher'] ?? $options['promo'])
+            )
+            ->unique(fn ($promo) => $promo->id)
+            ->values();
+        $cartItems = data_get($pricingPreview, 'items', []);
 
         $availablePoints = $customer?->is_loyalty_member ? (int) $customer->loyalty_points : 0;
-        $validatedVoucher = $this->validateVoucher($customer, $voucher, $subtotalAfterPromo, $at);
-        $voucherDiscount = $validatedVoucher
-            ? $this->calculateVoucherDiscount($validatedVoucher, $subtotalAfterPromo)
-            : 0;
+
+        // Validasi & hitung diskon tiap voucher secara berurutan — subtotal yang
+        // dipakai untuk voucher berikutnya adalah sisa setelah voucher sebelumnya,
+        // supaya voucher persentase tidak menghitung dari subtotal awal berulang.
+        $validatedPromos = collect();
+        $voucherFreeItems = [];
+        $runningSubtotal = $subtotalAfterPromo;
+
+        foreach ($manualPromos as $candidatePromo) {
+            $validated = $this->promoService->validateManualPromo($customer, $candidatePromo, $runningSubtotal, $at, $cartItems);
+
+            if (! $validated) {
+                continue;
+            }
+
+            $result = $this->promoService->calculateManualPromoDiscount($validated, $runningSubtotal, $cartItems);
+            $lineDiscount = min($runningSubtotal, max(0, (int) $result['discount']));
+
+            if ($lineDiscount <= 0 && empty($result['free_items'])) {
+                continue;
+            }
+
+            $runningSubtotal = max(0, $runningSubtotal - $lineDiscount);
+            $voucherFreeItems = array_merge($voucherFreeItems, $result['free_items'] ?? []);
+            $validatedPromos->push(['promo' => $validated, 'discount' => $lineDiscount]);
+        }
+
+        $voucherDiscount = (int) $validatedPromos->sum('discount');
+        $validatedPromo = $validatedPromos->first()['promo'] ?? null;
 
         $afterVoucher = max(0, $subtotalAfterPromo - $voucherDiscount);
         $redeemPointValue = (int) $settings['redeem_point_value'];
@@ -216,6 +255,7 @@ class LoyaltyService
                 'promo_discount_total' => (int) data_get($pricingPreview, 'summary.promo_discount_total', 0),
                 'subtotal_after_promo' => $subtotalAfterPromo,
                 'voucher_discount_total' => $voucherDiscount,
+                'voucher_free_items' => $voucherFreeItems,
                 'loyalty_discount_total' => $pointsDiscount,
                 'manual_discount_total' => $manualDiscountApplied,
                 'shipping_cost' => $shippingCost,
@@ -233,37 +273,24 @@ class LoyaltyService
                 'loyalty_tier' => $customer->loyalty_tier,
                 'loyalty_points' => $availablePoints,
             ] : null,
-            'voucher' => $validatedVoucher ? $this->serializeVoucher($validatedVoucher) : null,
-            'eligible_vouchers' => $customer
-                ? $this->eligibleVouchersForCustomer($customer, $subtotalAfterPromo, $at)
-                    ->map(fn (CustomerVoucher $eligibleVoucher) => $this->serializeVoucher($eligibleVoucher))
-                    ->values()
-                    ->all()
-                : [],
+            // 'voucher' dipertahankan (voucher pertama yang berhasil dipakai) demi
+            // kompatibilitas mundur; 'vouchers' berisi SEMUA voucher yang aktif
+            // dipakai pada transaksi ini (mendukung multi-voucher).
+            'voucher' => $validatedPromo ? $this->promoService->serializeManualPromo($validatedPromo, $validatedPromos->first()['discount'] ?? 0) : null,
+            'vouchers' => $validatedPromos
+                ->map(fn (array $applied) => $this->promoService->serializeManualPromo($applied['promo'], $applied['discount']))
+                ->values()
+                ->all(),
+            'eligible_vouchers' => $this->promoService
+                ->eligibleManualPromos($customer, $subtotalAfterPromo, $at, $cartItems)
+                ->map(fn (Promo $eligiblePromo) => $this->promoService->serializeManualPromo(
+                    $eligiblePromo,
+                    $this->promoService->calculateManualPromoDiscount($eligiblePromo, $subtotalAfterPromo, $cartItems)['discount']
+                ))
+                ->values()
+                ->all(),
             'settings' => $this->settingsPayload(),
         ];
-    }
-
-    public function eligibleVouchersForCustomer(
-        Customer $customer,
-        int $subtotalAfterPromo = 0,
-        ?CarbonInterface $at = null
-    ): Collection {
-        $at = $at ?? now();
-
-        return $customer->vouchers()
-            ->where('is_active', true)
-            ->where('is_used', false)
-            ->where(function ($query) use ($at) {
-                $query->whereNull('starts_at')->orWhere('starts_at', '<=', $at);
-            })
-            ->where(function ($query) use ($at) {
-                $query->whereNull('expires_at')->orWhere('expires_at', '>=', $at);
-            })
-            ->orderBy('expires_at')
-            ->get()
-            ->filter(fn (CustomerVoucher $voucher) => $subtotalAfterPromo >= (int) $voucher->minimum_order)
-            ->values();
     }
 
     public function finalizeTransaction(
@@ -282,14 +309,6 @@ class LoyaltyService
             $customer = $this->ensureMembership($customer);
         }
 
-        $voucherCode = (string) ($transaction->customer_voucher_code ?? '');
-        $voucher = $voucherCode !== ''
-            ? CustomerVoucher::query()
-                ->where('customer_id', $customer->id)
-                ->where('code', $voucherCode)
-                ->first()
-            : null;
-
         $redeemedPoints = (int) ($transaction->loyalty_points_redeemed ?? 0);
         if ($redeemedPoints > 0 && $customer->is_loyalty_member && $settings['enable_redeem']) {
             $customer->decrement('loyalty_points', $redeemedPoints);
@@ -304,20 +323,15 @@ class LoyaltyService
             );
         }
 
-        if ($voucher) {
-            $voucher->forceFill([
-                'is_used' => true,
-                'used_at' => now(),
-                'used_transaction_id' => $transaction->id,
-            ])->save();
-
+        $voucherCode = (string) ($transaction->customer_voucher_code ?? '');
+        if ($voucherCode !== '' && (int) ($transaction->customer_voucher_discount ?? 0) > 0) {
             $this->recordHistory(
                 $customer->fresh(),
                 $transaction,
                 LoyaltyPointHistory::TYPE_VOUCHER,
                 0,
                 (int) ($transaction->customer_voucher_discount ?? 0),
-                'Voucher '.$voucher->code.' digunakan'
+                'Voucher '.$voucherCode.' digunakan'
             );
         }
 
@@ -350,68 +364,6 @@ class LoyaltyService
         }
 
         return $this->syncTier($customer->fresh());
-    }
-
-    public function validateVoucher(
-        ?Customer $customer,
-        mixed $voucher,
-        int $subtotalAfterPromo,
-        ?CarbonInterface $at = null
-    ): ?CustomerVoucher {
-        $at = $at ?? now();
-
-        if (! $customer || ! $voucher instanceof CustomerVoucher) {
-            return null;
-        }
-
-        if ((int) $voucher->customer_id !== (int) $customer->id) {
-            return null;
-        }
-
-        if (! $voucher->is_active || $voucher->is_used) {
-            return null;
-        }
-
-        if ($voucher->starts_at && $voucher->starts_at->gt($at)) {
-            return null;
-        }
-
-        if ($voucher->expires_at && $voucher->expires_at->lt($at)) {
-            return null;
-        }
-
-        if ($subtotalAfterPromo < (int) $voucher->minimum_order) {
-            return null;
-        }
-
-        return $voucher;
-    }
-
-    public function calculateVoucherDiscount(CustomerVoucher $voucher, int $subtotalAfterPromo): int
-    {
-        $discount = match ($voucher->discount_type) {
-            CustomerVoucher::TYPE_PERCENTAGE => (int) round($subtotalAfterPromo * ((float) $voucher->discount_value / 100)),
-            CustomerVoucher::TYPE_FIXED_AMOUNT => (int) round((float) $voucher->discount_value),
-            default => 0,
-        };
-
-        return min($subtotalAfterPromo, max(0, $discount));
-    }
-
-    public function serializeVoucher(CustomerVoucher $voucher): array
-    {
-        return [
-            'id' => $voucher->id,
-            'code' => $voucher->code,
-            'name' => $voucher->name,
-            'discount_type' => $voucher->discount_type,
-            'discount_value' => (float) $voucher->discount_value,
-            'minimum_order' => (int) $voucher->minimum_order,
-            'expires_at' => optional($voucher->expires_at)?->toIso8601String(),
-            'starts_at' => optional($voucher->starts_at)?->toIso8601String(),
-            'used_at' => optional($voucher->used_at)?->toIso8601String(),
-            'status' => $voucher->currentStatusLabel(),
-        ];
     }
 
     public function syncAllMemberTiers(): void

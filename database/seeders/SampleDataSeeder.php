@@ -7,7 +7,7 @@ use App\Models\CashierShift;
 use App\Models\Category;
 use App\Models\Customer;
 use App\Models\CustomerCredit;
-use App\Models\CustomerVoucher;
+use App\Models\Promo;
 use App\Models\LoyaltyPointHistory;
 use App\Models\Payable;
 use App\Models\PayablePayment;
@@ -36,7 +36,7 @@ class SampleDataSeeder extends Seeder
 
         Cart::truncate();
         LoyaltyPointHistory::truncate();
-        CustomerVoucher::truncate();
+        Promo::truncate();
         CustomerCredit::truncate();
         SalesReturnItem::truncate();
         SalesReturn::truncate();
@@ -120,16 +120,20 @@ class SampleDataSeeder extends Seeder
             $customer = $customers->get($blueprint['customer']);
             if (! $customer) continue;
 
-            CustomerVoucher::create([
+            Promo::create([
                 'customer_id'    => $customer->id,
+                'activation_mode' => Promo::ACTIVATION_MANUAL,
+                'discount_kind'  => Promo::KIND_STANDARD_DISCOUNT,
                 'code'           => $blueprint['code'],
                 'name'           => $blueprint['name'],
                 'discount_type'  => $blueprint['discount_type'],
                 'discount_value' => $blueprint['discount_value'],
                 'minimum_order'  => $blueprint['minimum_order'],
+                'target_type'    => Promo::TARGET_ALL,
+                'customer_scope' => Promo::SCOPE_ALL,
                 'is_active'      => true,
                 'starts_at'      => now()->subDays(7),
-                'expires_at'     => now()->addDays(30),
+                'ends_at'        => now()->addDays(30),
             ]);
         }
     }

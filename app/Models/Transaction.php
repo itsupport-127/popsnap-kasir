@@ -17,6 +17,8 @@ class Transaction extends Model
         'customer_id' => 'integer',
         'cash' => 'integer',
         'change' => 'integer',
+        'dual_cash' => 'integer',
+        'dual_qris' => 'integer',
         'discount' => 'integer',
         'loyalty_points_earned' => 'integer',
         'loyalty_points_redeemed' => 'integer',
@@ -39,6 +41,8 @@ class Transaction extends Model
         'invoice',
         'cash',
         'change',
+        'dual_cash',
+        'dual_qris',
         'discount',
         'loyalty_points_earned',
         'loyalty_points_redeemed',
@@ -120,9 +124,9 @@ class Transaction extends Model
         return $this->hasMany(SalesReturn::class);
     }
 
-    public function usedCustomerVoucher()
+    public function usedPromo()
     {
-        return $this->hasOne(CustomerVoucher::class, 'used_transaction_id');
+        return $this->hasOne(Promo::class, 'used_transaction_id');
     }
 
     public function campaignLogs()
@@ -136,7 +140,7 @@ class Transaction extends Model
     protected function createdAt(): Attribute
     {
         return Attribute::make(
-            get: fn ($value) => Carbon::parse($value)->format('d-M-Y H:i:s'),
+            get: fn ($value) => Carbon::parse($value)->setTimezone('Asia/Jakarta')->format('d-M-Y H:i:s'),
         );
     }
 }

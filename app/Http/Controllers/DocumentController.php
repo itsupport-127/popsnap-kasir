@@ -159,6 +159,133 @@ class DocumentController extends Controller
         return $pdf->stream("receipt-{$transaction->invoice}-{$size}.pdf");
     }
 
+    /**
+     * Versi HTML murni dari struk — dipakai khusus oleh QZ Tray
+     * untuk print langsung ke printer thermal tanpa lewat PDF,
+     * supaya tidak terikat ukuran kertas (Form) Windows.
+     */
+    public function receiptHtml(string $invoice, string $size = '58')
+    {
+        $transaction = Transaction::with(['details.product', 'cashier', 'customer'])
+            ->where('invoice', $invoice)
+            ->firstOrFail();
+
+        $template = $size === '58' ? 'pdf.receipt_58' : 'pdf.receipt_80';
+
+        return view($template, [
+            'transaction' => $transaction,
+            'store'       => $this->storeProfile(),
+            'barcode'     => $this->barcode($transaction->invoice),
+        ]);
+    }
+
+    /**
+     * Versi RAW ESC/POS dari struk — dipakai QZ Tray untuk print
+     * langsung tanpa lewat rendering HTML (JavaFX), supaya tidak
+     * tergantung komponen WebView yang kadang macet di beberapa komputer.
+     */
+    public function receiptRaw(string $invoice, string $size = '58')
+    {
+        $transaction = Transaction::with(['details.product', 'cashier', 'customer'])
+            ->where('invoice', $invoice)
+            ->firstOrFail();
+
+        $store = $this->storeProfile();
+        $width = $size === '58' ? 32 : 48;
+
+        $ESC = "\x1B";
+        $GS  = "\x1D";
+
+        $init        = $ESC.'@';
+        $alignCenter = $ESC.'a'."\x01";
+        $alignLeft   = $ESC.'a'."\x00";
+        $boldOn      = $ESC.'E'."\x01";
+        $boldOff     = $ESC.'E'."\x00";
+        $cut         = "\n\n\n".$GS.'V'."\x00";
+
+        $line  = str_repeat('-', $width)."\n";
+        $dline = str_repeat('=', $width)."\n";
+
+        $center = function (string $text) use ($width) {
+            $text = trim($text);
+            $pad  = max(0, intdiv($width - strlen($text), 2));
+
+            return str_repeat(' ', $pad).$text."\n";
+        };
+
+        $kv = function ($label, $value) use ($width) {
+            $label = (string) $label;
+            $value = (string) $value;
+            $space = $width - strlen($label) - strlen($value);
+            if ($space < 1) {
+                $space = 1;
+            }
+
+            return $label.str_repeat(' ', $space).$value."\n";
+        };
+
+        $rp = fn ($num) => 'Rp '.number_format((float) ($num ?? 0), 0, ',', '.');
+
+        $out = $init.$alignCenter;
+        $out .= $boldOn.($store['name'] ?? 'Toko')."\n".$boldOff;
+
+        if (! empty($store['address'])) {
+            $out .= wordwrap($store['address'], $width, "\n", true)."\n";
+        }
+        if (! empty($store['phone'])) {
+            $out .= $store['phone']."\n";
+        }
+        if (! empty($store['website'])) {
+            $out .= $store['website']."\n";
+        }
+
+        $out .= $alignLeft.$dline;
+        $out .= $kv('No:', $transaction->invoice);
+        $out .= $kv('Tgl:', \Carbon\Carbon::parse($transaction->created_at)->format('d/m/Y H:i'));
+        $out .= $kv('Kasir:', $transaction->cashier->name ?? '-');
+        $out .= $kv('Pelanggan:', $transaction->customer->name ?? 'Umum');
+        $out .= $dline;
+
+        foreach ($transaction->details as $item) {
+            $name = $item->product->title ?? 'Produk';
+            $out .= $boldOn.$name."\n".$boldOff;
+
+            $qty       = max(1, (int) $item->qty);
+            $total     = $item->price;
+            $unitPrice = $item->unit_price ?: ($qty ? $total / $qty : $total);
+            $qtyLine   = $qty.'x @ '.$rp($unitPrice);
+
+            $out .= $kv($qtyLine, $rp($total));
+        }
+        $out .= $line;
+
+        $promoDiscount   = $transaction->details->sum('discount_total');
+        $voucherDiscount = $transaction->customer_voucher_discount ?? 0;
+        $loyaltyDiscount = $transaction->loyalty_discount_total ?? 0;
+        $subtotal        = ($transaction->grand_total ?? 0) + ($transaction->discount ?? 0) - ($transaction->shipping_cost ?? 0) + $promoDiscount + $voucherDiscount + $loyaltyDiscount;
+
+        $out .= $kv('Subtotal', $rp($subtotal));
+        $out .= $boldOn.$kv('TOTAL', $rp($transaction->grand_total)).$boldOff;
+        $out .= $line;
+
+        $method = strtoupper($transaction->payment_method ?? 'CASH');
+        $out .= $kv("Bayar ({$method})", $rp($transaction->cash));
+
+        if (($transaction->change ?? 0) > 0) {
+            $out .= $boldOn.$kv('Kembali', $rp($transaction->change)).$boldOff;
+        }
+        $out .= $dline;
+
+        $out .= $alignCenter;
+        $out .= $transaction->invoice."\n";
+        $out .= 'Terima kasih!'."\n";
+
+        $out .= $cut;
+
+        return response($out, 200)
+            ->header('Content-Type', 'text/plain; charset=UTF-8');
+    }
+
     public function shipping(string $invoice)
     {
         $this->ensureFontDirectory();

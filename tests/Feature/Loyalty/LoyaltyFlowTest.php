@@ -5,7 +5,7 @@ namespace Tests\Feature\Loyalty;
 use App\Models\Cart;
 use App\Models\Category;
 use App\Models\Customer;
-use App\Models\CustomerVoucher;
+use App\Models\Promo;
 use App\Models\LoyaltyPointHistory;
 use App\Models\Product;
 use App\Models\Setting;
@@ -58,13 +58,17 @@ class LoyaltyFlowTest extends TestCase
             'loyalty_points' => 50,
             'loyalty_member_since' => now()->subMonth(),
         ]);
-        $voucher = CustomerVoucher::create([
+        $voucher = Promo::create([
             'customer_id' => $customer->id,
+            'activation_mode' => Promo::ACTIVATION_MANUAL,
+            'discount_kind' => Promo::KIND_STANDARD_DISCOUNT,
             'code' => 'VCR-PREVIEW',
             'name' => 'Voucher Preview',
-            'discount_type' => CustomerVoucher::TYPE_FIXED_AMOUNT,
+            'discount_type' => Promo::TYPE_FIXED_AMOUNT,
             'discount_value' => 10000,
             'minimum_order' => 50000,
+            'target_type' => Promo::TARGET_ALL,
+            'customer_scope' => Promo::SCOPE_ALL,
             'is_active' => true,
         ]);
 
@@ -118,13 +122,17 @@ class LoyaltyFlowTest extends TestCase
             'loyalty_points' => 20,
             'loyalty_member_since' => now()->subMonths(2),
         ]);
-        $voucher = CustomerVoucher::create([
+        $voucher = Promo::create([
             'customer_id' => $customer->id,
+            'activation_mode' => Promo::ACTIVATION_MANUAL,
+            'discount_kind' => Promo::KIND_STANDARD_DISCOUNT,
             'code' => 'VCR-CHECKOUT',
             'name' => 'Voucher Checkout',
-            'discount_type' => CustomerVoucher::TYPE_FIXED_AMOUNT,
+            'discount_type' => Promo::TYPE_FIXED_AMOUNT,
             'discount_value' => 10000,
             'minimum_order' => 50000,
+            'target_type' => Promo::TARGET_ALL,
+            'customer_scope' => Promo::SCOPE_ALL,
             'is_active' => true,
         ]);
 

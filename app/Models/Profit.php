@@ -36,7 +36,7 @@ class Profit extends Model
     protected function createdAt(): Attribute
     {
         return Attribute::make(
-            get: fn ($value) => Carbon::parse($value)->format('d-M-Y H:i:s'),
+            get: fn ($value) => Carbon::parse($value)->setTimezone('Asia/Jakarta')->format('d-M-Y H:i:s'),
         );
     }
 }

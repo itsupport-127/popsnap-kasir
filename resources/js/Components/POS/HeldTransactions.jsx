@@ -7,6 +7,7 @@ import {
     IconChevronDown,
     IconChevronUp,
     IconX,
+    IconUser,
 } from "@tabler/icons-react";
 import toast from "react-hot-toast";
 
@@ -86,6 +87,11 @@ export default function HeldTransactions({
         0
     );
 
+    // Kalau cuma 1 transaksi tertahan, tampilkan nama pelanggannya
+    // langsung di badge supaya kasir gampang ingat tanpa perlu expand.
+    const singleHeldCustomer =
+        heldCarts.length === 1 ? heldCarts[0]?.customer_name : null;
+
     // Collapsed view - compact clickable badge (minimal space)
     if (!isExpanded) {
         return (
@@ -100,6 +106,12 @@ export default function HeldTransactions({
                     <span className="text-sm font-medium text-amber-700 dark:text-amber-300">
                         Transaksi Ditahan
                     </span>
+                    {singleHeldCustomer && (
+                        <span className="text-xs font-semibold text-amber-800 dark:text-amber-200 flex items-center gap-0.5">
+                            <IconUser size={11} />
+                            {singleHeldCustomer}
+                        </span>
+                    )}
                     <span className="text-xs text-amber-600 dark:text-amber-400">
                         • {formatPrice(totalHeldAmount)}
                     </span>
@@ -141,6 +153,12 @@ export default function HeldTransactions({
                             <p className="text-xs font-medium text-amber-800 dark:text-amber-200 truncate">
                                 {hold.label}
                             </p>
+                            {hold.customer_name && (
+                                <p className="text-xs text-amber-700 dark:text-amber-300 font-semibold truncate flex items-center gap-1">
+                                    <IconUser size={11} className="shrink-0" />
+                                    {hold.customer_name}
+                                </p>
+                            )}
                             <p className="text-xs text-amber-600 dark:text-amber-400">
                                 {hold.items_count} item •{" "}
                                 {formatPrice(hold.total)}

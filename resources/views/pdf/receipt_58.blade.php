@@ -82,7 +82,10 @@
         $shipping = $transaction->shipping_cost ?? 0;
         $cash = $transaction->cash ?? 0;
         $change = $transaction->change ?? 0;
-        $paymentMethod = strtoupper($transaction->payment_method ?? 'TUNAI');
+        $isDualPayment = $transaction->payment_method === 'dual_cash_qris';
+        $dualCash = $transaction->dual_cash ?? 0;
+        $dualQris = $transaction->dual_qris ?? 0;
+        $paymentMethod = $isDualPayment ? 'TUNAI+QRIS' : strtoupper(str_replace(['_', 'cash'], [' ', 'TUNAI'], $transaction->payment_method ?? 'TUNAI'));
     @endphp
 
     <div class="section">
@@ -129,15 +132,34 @@
     <pre style="margin:3px 0;">{{ $dash }}</pre>
 
     <div class="section">
-        <div style="display:flex; justify-content:space-between;">
-            <span>Bayar ({{ $paymentMethod }})</span>
-            <span>{{ $formatPrice($cash) }}</span>
-        </div>
-        @if($change > 0)
-            <div style="display:flex; justify-content:space-between; font-weight:700;">
-                <span>Kembali</span>
-                <span>{{ $formatPrice($change) }}</span>
+        @if($isDualPayment)
+            {{-- Dual payment: tampilkan Tunai dan QRIS terpisah --}}
+            <div style="display:flex; justify-content:space-between;">
+                <span>Bayar Tunai</span>
+                <span>{{ $formatPrice($dualCash) }}</span>
             </div>
+            <div style="display:flex; justify-content:space-between;">
+                <span>Bayar QRIS</span>
+                <span>{{ $formatPrice($dualQris) }}</span>
+            </div>
+            @if($change > 0)
+                <div style="display:flex; justify-content:space-between; font-weight:700;">
+                    <span>Kembali</span>
+                    <span>{{ $formatPrice($change) }}</span>
+                </div>
+            @endif
+        @else
+            {{-- Single payment --}}
+            <div style="display:flex; justify-content:space-between;">
+                <span>Bayar ({{ $paymentMethod }})</span>
+                <span>{{ $formatPrice($cash) }}</span>
+            </div>
+            @if($change > 0)
+                <div style="display:flex; justify-content:space-between; font-weight:700;">
+                    <span>Kembali</span>
+                    <span>{{ $formatPrice($change) }}</span>
+                </div>
+            @endif
         @endif
     </div>
 

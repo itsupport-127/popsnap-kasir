@@ -373,7 +373,7 @@ export default function PaymentPanel({
                         </div>
                     )}
 
-                {/* Cash Input (only for cash payment) */}
+                {/* Input Tunai (hanya untuk pembayaran tunai) */}
                 {isCashPayment && (
                     <div>
                         <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
@@ -392,7 +392,7 @@ export default function PaymentPanel({
                             ))}
                         </div>
 
-                        {/* Cash Input */}
+                        {/* Input Tunai */}
                         <input
                             type="text"
                             inputMode="numeric"

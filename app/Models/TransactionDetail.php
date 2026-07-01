@@ -22,7 +22,7 @@ class TransactionDetail extends Model
         'unit_price',
         'price',
         'discount_total',
-        'pricing_rule_id',
+        'promo_id',
         'pricing_rule_name',
         'pricing_rule_kind',
         'pricing_group_key',
@@ -35,7 +35,7 @@ class TransactionDetail extends Model
         'unit_price' => 'integer',
         'price' => 'integer',
         'discount_total' => 'integer',
-        'pricing_rule_id' => 'integer',
+        'promo_id' => 'integer',
         'pricing_rule_kind' => 'string',
     ];
 
@@ -59,9 +59,9 @@ class TransactionDetail extends Model
         return $this->belongsTo(Product::class);
     }
 
-    public function pricingRule()
+    public function promo()
     {
-        return $this->belongsTo(PricingRule::class);
+        return $this->belongsTo(Promo::class);
     }
 
     public function salesReturnItems()
