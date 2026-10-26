@@ -8,6 +8,7 @@ export default function LinkItem({
     access,
     title,
     sidebarOpen,
+    onNavigate,
     ...props
 }) {
     const { url } = usePage();
@@ -32,6 +33,7 @@ export default function LinkItem({
         return (
             <Link
                 href={href}
+                onClick={onNavigate}
                 className={`${baseClasses} ${activeClasses} px-4 py-2.5 text-sm font-medium`}
                 {...props}
             >
@@ -51,6 +53,7 @@ export default function LinkItem({
     return (
         <Link
             href={href}
+            onClick={onNavigate}
             className={`
                 w-full flex justify-center py-3
                 transition-all duration-200

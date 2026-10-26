@@ -8,9 +8,12 @@ import { useAuthorization } from "@/Utils/authorization";
 import {
     IconCirclePlus,
     IconClipboardCheck,
+    IconCopy,
     IconEye,
     IconSearch,
 } from "@tabler/icons-react";
+import toast from "react-hot-toast";
+import Swal from "sweetalert2";
 
 function formatDateTime(value) {
     if (!value) return "-";
@@ -24,6 +27,30 @@ function formatDateTime(value) {
 export default function Index({ stockOpnames, filters }) {
     const { can } = useAuthorization();
     const canCreateStockOpnames = can("stock-opnames-create");
+
+    const duplicateSession = (stockOpname) => {
+        Swal.fire({
+            title: `Duplikat sesi ${stockOpname.code}?`,
+            text: `Bikin sesi baru berisi ${stockOpname.items_count} produk yang sama, tinggal isi Stock di Toko lagi buat periode ini.`,
+            icon: "question",
+            showCancelButton: true,
+            confirmButtonColor: "#0ea5e9",
+            cancelButtonColor: "#64748b",
+            confirmButtonText: "Ya, Duplikat",
+            cancelButtonText: "Batal",
+        }).then((result) => {
+            if (!result.isConfirmed) return;
+
+            router.post(
+                route("stock-opnames.duplicate", stockOpname.id),
+                {},
+                {
+                    onSuccess: () => toast.success("Sesi baru berhasil dibuat"),
+                    onError: () => toast.error("Gagal menduplikat sesi"),
+                }
+            );
+        });
+    };
 
     const handleFilterChange = (key, value) => {
         router.get(
@@ -161,12 +188,28 @@ export default function Index({ stockOpnames, filters }) {
                                             : "-"}
                                     </Table.Td>
                                     <Table.Td className="text-center">
-                                        <Link
-                                            href={route("stock-opnames.show", stockOpname.id)}
-                                            className="inline-flex rounded-xl border border-slate-200 bg-slate-50 p-2 text-slate-600 transition hover:border-primary-300 hover:text-primary-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:border-primary-700 dark:hover:text-primary-400"
-                                        >
-                                            <IconEye size={18} />
-                                        </Link>
+                                        <div className="inline-flex items-center gap-2">
+                                            <Link
+                                                href={route("stock-opnames.show", stockOpname.id)}
+                                                className="inline-flex rounded-xl border border-slate-200 bg-slate-50 p-2 text-slate-600 transition hover:border-primary-300 hover:text-primary-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:border-primary-700 dark:hover:text-primary-400"
+                                                title="Lihat"
+                                            >
+                                                <IconEye size={18} />
+                                            </Link>
+                                            {canCreateStockOpnames &&
+                                                stockOpname.items_count > 0 && (
+                                                    <button
+                                                        type="button"
+                                                        onClick={() =>
+                                                            duplicateSession(stockOpname)
+                                                        }
+                                                        className="inline-flex rounded-xl border border-slate-200 bg-slate-50 p-2 text-slate-600 transition hover:border-primary-300 hover:text-primary-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:border-primary-700 dark:hover:text-primary-400"
+                                                        title="Duplikat sesi ini (buat periode baru dengan produk yang sama)"
+                                                    >
+                                                        <IconCopy size={18} />
+                                                    </button>
+                                                )}
+                                        </div>
                                     </Table.Td>
                                 </tr>
                             ))

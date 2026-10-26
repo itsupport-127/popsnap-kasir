@@ -6,16 +6,16 @@
 /* === Color Palette === */
 :root {
   /* Primary - Deep Blue/Indigo */
-  --color-primary-50: 238 242 255;
-  --color-primary-100: 224 231 255;
-  --color-primary-200: 199 210 254;
-  --color-primary-300: 165 180 252;
-  --color-primary-400: 129 140 248;
-  --color-primary-500: 99 102 241;
-  --color-primary-600: 79 70 229;
-  --color-primary-700: 67 56 202;
-  --color-primary-800: 55 48 163;
-  --color-primary-900: 49 46 129;
+  --color-primary-50: 240 246 250;
+  --color-primary-100: 219 233 244;
+  --color-primary-200: 183 209 231;
+  --color-primary-300: 134 176 211;
+  --color-primary-400: 83 141 190;
+  --color-primary-500: 51 114 169;
+  --color-primary-600: 39 89 135;
+  --color-primary-700: 32 72 109;
+  --color-primary-800: 28 61 92;
+  --color-primary-900: 26 53 79;
 
   /* Accent - Teal/Cyan */
   --color-accent-50: 236 254 255;
@@ -120,7 +120,7 @@
   --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
   --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
   --shadow-xl: 0 20px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.1);
-  --shadow-glow: 0 0 20px rgb(99 102 241 / 0.3);
+  --shadow-glow: 0 0 20px rgb(51 114 169 / 0.3);
 
   /* === Transitions === */
   --transition-fast: 150ms cubic-bezier(0.4, 0, 0.2, 1);
@@ -263,6 +263,7 @@ body {
   transition: all var(--transition-fast);
 }
 
+/* Updated to use new blue colors */
 .quick-amount-btn:hover {
   background-color: rgb(var(--color-primary-100));
   border-color: rgb(var(--color-primary-400));

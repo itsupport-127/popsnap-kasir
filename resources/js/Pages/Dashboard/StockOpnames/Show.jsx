@@ -9,11 +9,13 @@ import {
     IconCheck,
     IconDeviceFloppy,
     IconClipboardCheck,
+    IconMailForward,
     IconPackage,
     IconPlus,
     IconSearch,
 } from "@tabler/icons-react";
 import toast from "react-hot-toast";
+import Swal from "sweetalert2";
 import { useAuthorization } from "@/Utils/authorization";
 
 const formatDateTime = (value) =>
@@ -48,6 +50,8 @@ export default function Show({
     stockOpname,
     availableProducts,
     productFilters,
+    categories = [],
+    reportRecipients = [],
 }) {
     const { can } = useAuthorization();
     const canEditStockOpname = can("stock-opnames-create");
@@ -57,9 +61,43 @@ export default function Show({
     const [localItems, setLocalItems] = useState(stockOpname.items);
     const [savingItemId, setSavingItemId] = useState(null);
     const [showProductModal, setShowProductModal] = useState(false);
+    const [sendingEmail, setSendingEmail] = useState(false);
     const [productSearchInput, setProductSearchInput] = useState(
         productFilters.search || ""
     );
+
+    const sendReportEmail = () => {
+        setSendingEmail(true);
+        router.post(
+            route("stock-opnames.send-report-email", stockOpname.id),
+            {},
+            {
+                preserveScroll: true,
+                onSuccess: () =>
+                    toast.success("Email laporan stock opname berhasil dikirim."),
+                onError: () =>
+                    toast.error("Gagal mengirim email laporan stock opname."),
+                onFinish: () => setSendingEmail(false),
+            }
+        );
+    };
+
+    const promptSendEmail = () => {
+        Swal.fire({
+            title: "Kirim email laporan stock opname?",
+            html: `Laporan akan dikirim ke:<br/><span style="font-size:12px;color:#64748b;">${reportRecipients.join(", ")}</span>`,
+            icon: "question",
+            showCancelButton: true,
+            confirmButtonColor: "#0ea5e9",
+            cancelButtonColor: "#64748b",
+            confirmButtonText: "Ya, Kirim Sekarang",
+            cancelButtonText: "Nanti Saja",
+        }).then((result) => {
+            if (result.isConfirmed) {
+                sendReportEmail();
+            }
+        });
+    };
 
     const notesForm = useForm({
         notes: stockOpname.notes || "",
@@ -77,6 +115,7 @@ export default function Show({
     const filters = useMemo(
         () => ({
             product_search: productFilters.search || "",
+            product_category_id: productFilters.category_id || "",
         }),
         [productFilters]
     );
@@ -96,7 +135,7 @@ export default function Show({
             (item) => Number(item.difference || 0) !== 0
         );
         const totalAdjustment = countedItems.reduce(
-            (carry, item) => carry + Number(item.difference || 0),
+            (carry, item) => carry - Number(item.difference || 0),
             0
         );
 
@@ -163,6 +202,22 @@ export default function Show({
                     toast.success("Produk ditambahkan ke sesi");
                 },
                 onError: () => toast.error("Gagal menambahkan produk"),
+            }
+        );
+    };
+
+    const [addingBulk, setAddingBulk] = useState(false);
+
+    const addAllInCategory = (categoryId) => {
+        setAddingBulk(true);
+        router.post(
+            route("stock-opnames.items.store-bulk", stockOpname.id),
+            { category_id: categoryId },
+            {
+                preserveScroll: true,
+                onSuccess: () => toast.success("Semua produk di kategori ini ditambahkan"),
+                onError: () => toast.error("Gagal menambahkan produk"),
+                onFinish: () => setAddingBulk(false),
             }
         );
     };
@@ -294,6 +349,55 @@ export default function Show({
                 </div>
             </div>
 
+            {!isDraft && canFinalizeStockOpname && (
+                <div className="mb-6 rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
+                    <div className="flex items-center gap-2">
+                        <IconMailForward size={18} className="text-primary-500" />
+                        <h2 className="font-semibold text-slate-800 dark:text-slate-200">
+                            Laporan Email
+                        </h2>
+                    </div>
+                    {stockOpname.report_email_sent_at ? (
+                        <div className="mt-2">
+                            <p className="text-sm text-success-600 dark:text-success-400">
+                                Terkirim {formatDateTime(stockOpname.report_email_sent_at)}
+                                {stockOpname.report_email_sent_by
+                                    ? ` oleh ${stockOpname.reportEmailSentBy?.name || "-"}`
+                                    : ""}
+                            </p>
+                            <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                                Ke: {stockOpname.report_email_sent_to || reportRecipients.join(", ")}
+                            </p>
+                        </div>
+                    ) : (
+                        <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
+                            Belum dikirim. Kirim sekarang, atau kirim manual kapan
+                            saja lain waktu dari halaman ini.
+                        </p>
+                    )}
+                    <p className="mt-2 text-xs text-slate-400 dark:text-slate-500">
+                        Penerima: {reportRecipients.join(", ")}
+                    </p>
+                    <div className="mt-4">
+                        <button
+                            type="button"
+                            onClick={promptSendEmail}
+                            disabled={sendingEmail}
+                            className="inline-flex items-center gap-2 rounded-xl border border-primary-500 px-4 py-2.5 text-sm font-medium text-primary-600 transition-colors hover:bg-primary-50 disabled:cursor-not-allowed disabled:opacity-60 dark:text-primary-400 dark:hover:bg-primary-950/30"
+                        >
+                            <IconMailForward size={18} />
+                            <span>
+                                {sendingEmail
+                                    ? "Mengirim..."
+                                    : stockOpname.report_email_sent_at
+                                      ? "Kirim Ulang"
+                                      : "Kirim Email Sekarang"}
+                            </span>
+                        </button>
+                    </div>
+                </div>
+            )}
+
             <div className="mb-6 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
                 <SummaryCard label="Total Item" value={summary.totalItems} />
                 <SummaryCard
@@ -339,17 +443,22 @@ export default function Show({
                             <Table.Thead>
                                 <tr>
                                     <Table.Th>Produk</Table.Th>
-                                    <Table.Th>Stok Sistem</Table.Th>
-                                    <Table.Th>Stok Fisik</Table.Th>
+                                    <Table.Th>Stock Awal</Table.Th>
+                                    <Table.Th>Stock Akhir</Table.Th>
+                                    <Table.Th>Stock di Toko</Table.Th>
                                     <Table.Th>Selisih</Table.Th>
-                                    <Table.Th>Alasan</Table.Th>
+                                    <Table.Th>Catatan</Table.Th>
                                     <Table.Th className="w-24 text-center">Simpan</Table.Th>
                                 </tr>
                             </Table.Thead>
                             <Table.Tbody>
                                 {localItems.length > 0 ? (
                                     localItems.map((item) => {
-                                        const difference = Number(item.difference || 0);
+                                        // Selisih = Stock Akhir − Stock di Toko (bukan
+                                        // sebaliknya) — sesuai cara baca laporan opname
+                                        // fisik: positif artinya barang "hilang"/kurang
+                                        // dari yang seharusnya ada.
+                                        const difference = -Number(item.difference || 0);
                                         const isDifferent =
                                             item.physical_stock !== null && difference !== 0;
 
@@ -370,6 +479,9 @@ export default function Show({
                                                                 "-"}
                                                         </p>
                                                     </div>
+                                                </Table.Td>
+                                                <Table.Td className="text-slate-500 dark:text-slate-400">
+                                                    {item.opening_stock ?? "-"}
                                                 </Table.Td>
                                                 <Table.Td>{item.system_stock}</Table.Td>
                                                 <Table.Td>
@@ -524,27 +636,57 @@ export default function Show({
                 maxWidth="2xl"
             >
                 <div className="space-y-4">
-                    <div className="relative">
-                        <input
-                            type="text"
-                            autoFocus
-                            value={productSearchInput}
-                            onChange={(event) =>
-                                setProductSearchInput(event.target.value)
-                            }
-                            placeholder="Cari nama produk, barcode, atau SKU..."
-                            className="h-12 w-full rounded-xl border border-slate-200 bg-slate-50 px-4 pr-11 text-sm text-slate-800 outline-none transition focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
-                        />
-                        <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-4 text-slate-400">
-                            <IconSearch size={18} />
+                    <div className="flex flex-col gap-3 sm:flex-row">
+                        <div className="relative flex-1">
+                            <input
+                                type="text"
+                                autoFocus
+                                value={productSearchInput}
+                                onChange={(event) =>
+                                    setProductSearchInput(event.target.value)
+                                }
+                                placeholder="Cari nama produk, barcode, atau SKU..."
+                                className="h-12 w-full rounded-xl border border-slate-200 bg-slate-50 px-4 pr-11 text-sm text-slate-800 outline-none transition focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
+                            />
+                            <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-4 text-slate-400">
+                                <IconSearch size={18} />
+                            </div>
                         </div>
+                        <select
+                            value={filters.product_category_id}
+                            onChange={(event) =>
+                                updateFilter("product_category_id", event.target.value)
+                            }
+                            className="h-12 rounded-xl border border-slate-200 bg-slate-50 px-4 text-sm text-slate-800 outline-none transition focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 sm:w-56"
+                        >
+                            <option value="">Semua Kategori</option>
+                            {categories.map((category) => (
+                                <option key={category.id} value={category.id}>
+                                    {category.name}
+                                </option>
+                            ))}
+                        </select>
                     </div>
+
+                    {filters.product_category_id && availableProducts.length > 0 && (
+                        <button
+                            type="button"
+                            onClick={() => addAllInCategory(filters.product_category_id)}
+                            disabled={addingBulk}
+                            className="inline-flex items-center gap-2 rounded-xl border border-primary-500 px-4 py-2 text-sm font-medium text-primary-600 transition-colors hover:bg-primary-50 disabled:cursor-not-allowed disabled:opacity-60 dark:text-primary-400 dark:hover:bg-primary-950/30"
+                        >
+                            <IconPlus size={16} />
+                            {addingBulk
+                                ? "Menambahkan..."
+                                : `Tambah Semua di Kategori Ini (${availableProducts.length})`}
+                        </button>
+                    )}
 
                     {isWaitingSearch ? (
                         <div className="rounded-xl border border-dashed border-slate-200 p-6 text-center text-sm text-slate-500 dark:border-slate-700 dark:text-slate-400">
                             Menunggu input selesai, pencarian akan dijalankan dalam 1-2 detik.
                         </div>
-                    ) : filters.product_search ? (
+                    ) : filters.product_search || filters.product_category_id ? (
                         availableProducts.length > 0 ? (
                             <div className="max-h-[420px] space-y-3 overflow-y-auto pr-1 dashboard-scrollbar">
                                 {availableProducts.map((product) => (
@@ -573,12 +715,12 @@ export default function Show({
                             </div>
                         ) : (
                             <div className="rounded-xl border border-dashed border-slate-200 p-6 text-center text-sm text-slate-500 dark:border-slate-700 dark:text-slate-400">
-                                Tidak ada produk yang cocok dengan kata kunci pencarian.
+                                Tidak ada produk yang cocok (atau semuanya sudah ada di sesi ini).
                             </div>
                         )
                     ) : (
                         <div className="rounded-xl border border-dashed border-slate-200 p-6 text-center text-sm text-slate-500 dark:border-slate-700 dark:text-slate-400">
-                            Ketik kata kunci, lalu tunggu sebentar untuk menampilkan hasil pencarian produk.
+                            Ketik kata kunci, atau pilih kategori buat nampilin daftar produknya.
                         </div>
                     )}
                 </div>

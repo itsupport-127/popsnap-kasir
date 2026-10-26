@@ -3,6 +3,7 @@ import { Head, router } from "@inertiajs/react";
 import DashboardLayout from "@/Layouts/DashboardLayout";
 import InputSelect from "@/Components/Dashboard/InputSelect";
 import Pagination from "@/Components/Dashboard/Pagination";
+import TransactionItemsModal from "@/Components/Dashboard/TransactionItemsModal";
 import {
     IconCoin,
     IconDatabaseOff,
@@ -62,6 +63,10 @@ const ProfitReport = ({
     customers,
 }) => {
     const [showFilters, setShowFilters] = useState(false);
+    const [itemModal, setItemModal] = useState({
+        open: false,
+        transaction: null,
+    });
     const [filterData, setFilterData] = useState({
         ...defaultFilters,
         ...filters,
@@ -187,13 +192,6 @@ const ProfitReport = ({
                     </button>
                 </div>
 
-                {/* Summary Cards */}
-                <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-                    {summaryCards.map((card) => (
-                        <SummaryCard key={card.title} {...card} />
-                    ))}
-                </div>
-
                 {/* Filters */}
                 {showFilters && (
                     <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-5 animate-slide-up">
@@ -299,6 +297,13 @@ const ProfitReport = ({
                     </div>
                 )}
 
+                {/* Summary Cards */}
+                <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+                    {summaryCards.map((card) => (
+                        <SummaryCard key={card.title} {...card} />
+                    ))}
+                </div>
+
                 {/* Table & Mobile Cards */}
                 {rows.length > 0 ? (
                     <div className="bg-transparent border-0 shadow-none rounded-2xl sm:bg-white sm:dark:bg-slate-900 sm:border sm:border-slate-200 sm:dark:border-slate-800 sm:overflow-hidden">
@@ -356,9 +361,19 @@ const ProfitReport = ({
                                                 {trx.customer?.name ?? "-"}
                                             </td>
                                             <td className="px-4 py-4 text-center">
-                                                <span className="px-2 py-0.5 text-xs font-medium bg-primary-100 dark:bg-primary-900/50 text-primary-700 dark:text-primary-400 rounded-full">
+                                                <button
+                                                    type="button"
+                                                    onClick={() =>
+                                                        setItemModal({
+                                                            open: true,
+                                                            transaction: trx,
+                                                        })
+                                                    }
+                                                    className="px-2 py-0.5 text-xs font-medium bg-primary-100 dark:bg-primary-900/50 text-primary-700 dark:text-primary-400 rounded-full hover:bg-primary-200 dark:hover:bg-primary-900 transition-colors cursor-pointer"
+                                                    title="Lihat detail item"
+                                                >
                                                     {trx.total_items ?? 0}
-                                                </span>
+                                                </button>
                                             </td>
                                             <td className="px-4 py-4 text-right text-sm text-slate-900 dark:text-white">
                                                 {formatCurrency(
@@ -421,9 +436,18 @@ const ProfitReport = ({
                                             <p className="text-xs text-slate-500 dark:text-slate-400">
                                                 Item
                                             </p>
-                                            <p className="font-medium">
+                                            <button
+                                                type="button"
+                                                onClick={() =>
+                                                    setItemModal({
+                                                        open: true,
+                                                        transaction: trx,
+                                                    })
+                                                }
+                                                className="font-medium text-primary-600 dark:text-primary-400 underline underline-offset-2"
+                                            >
                                                 {trx.total_items ?? 0}
-                                            </p>
+                                            </button>
                                         </div>
                                     </div>
                                 </div>
@@ -449,6 +473,14 @@ const ProfitReport = ({
 
                 {links.length > 3 && <Pagination links={links} />}
             </div>
+
+            <TransactionItemsModal
+                open={itemModal.open}
+                transaction={itemModal.transaction}
+                onClose={() =>
+                    setItemModal({ open: false, transaction: null })
+                }
+            />
         </>
     );
 };

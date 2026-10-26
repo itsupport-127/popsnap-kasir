@@ -73,19 +73,32 @@
     <pre style="margin:3px 0;">{{ $dash }}</pre>
 
     @php
-        $promoDiscount = $transaction->details->sum('discount_total');
+        // "discount_total" per item itu GABUNGAN promo otomatis + voucher +
+        // diskon manual per-item — porsi voucher & diskon-item harus
+        // dikurangi dulu supaya "Promo" nggak dobel-hitung sama baris
+        // "Voucher"/"Diskon Manual" yang ditampilkan terpisah di bawah.
+        $itemManualDiscountTotal = $transaction->details->sum('item_manual_discount');
+        $promoDiscount = $transaction->details->sum('discount_total')
+            - $transaction->details->sum('voucher_discount')
+            - $itemManualDiscountTotal;
         $voucherDiscount = $transaction->customer_voucher_discount ?? 0;
         $loyaltyDiscount = $transaction->loyalty_discount_total ?? 0;
-        $subtotal = ($transaction->grand_total ?? 0) + ($transaction->discount ?? 0) - ($transaction->shipping_cost ?? 0) + $promoDiscount + $voucherDiscount + $loyaltyDiscount;
-        $discount = $transaction->discount ?? 0;
+        $discount = ($transaction->discount ?? 0) + $itemManualDiscountTotal;
+        $subtotal = ($transaction->grand_total ?? 0) + $discount - ($transaction->shipping_cost ?? 0) + $promoDiscount + $voucherDiscount + $loyaltyDiscount;
         $total = $transaction->grand_total ?? 0;
         $shipping = $transaction->shipping_cost ?? 0;
         $cash = $transaction->cash ?? 0;
         $change = $transaction->change ?? 0;
+        // "cash" cuma valid buat pembayaran tunai — QRIS/transfer/gateway
+        // online kolom itu selalu 0 di database, jadi jangan dipakai
+        // langsung buat nampilin "Bayar", nanti salah kelihatan Rp 0.
+        $paidAmount = in_array($transaction->payment_method, ['cash', 'pay_later'], true)
+            ? $cash
+            : $total;
         $isDualPayment = $transaction->payment_method === 'dual_cash_qris';
         $dualCash = $transaction->dual_cash ?? 0;
         $dualQris = $transaction->dual_qris ?? 0;
-        $paymentMethod = $isDualPayment ? 'TUNAI+QRIS' : strtoupper(str_replace(['_', 'cash'], [' ', 'TUNAI'], $transaction->payment_method ?? 'TUNAI'));
+        $paymentMethod = \App\Models\Transaction::receiptPaymentLabel($transaction->payment_method);
     @endphp
 
     <div class="section">
@@ -152,7 +165,7 @@
             {{-- Single payment --}}
             <div style="display:flex; justify-content:space-between;">
                 <span>Bayar ({{ $paymentMethod }})</span>
-                <span>{{ $formatPrice($cash) }}</span>
+                <span>{{ $formatPrice($paidAmount) }}</span>
             </div>
             @if($change > 0)
                 <div style="display:flex; justify-content:space-between; font-weight:700;">

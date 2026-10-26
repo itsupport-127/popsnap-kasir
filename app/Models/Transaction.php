@@ -24,6 +24,7 @@ class Transaction extends Model
         'loyalty_points_redeemed' => 'integer',
         'loyalty_discount_total' => 'integer',
         'customer_voucher_discount' => 'integer',
+        'item_manual_discount_total' => 'integer',
         'shipping_cost' => 'integer',
         'grand_total' => 'integer',
         'bank_account_id' => 'integer',
@@ -48,6 +49,7 @@ class Transaction extends Model
         'loyalty_points_redeemed',
         'loyalty_discount_total',
         'customer_voucher_discount',
+        'item_manual_discount_total',
         'customer_voucher_code',
         'customer_voucher_name',
         'shipping_cost',
@@ -64,6 +66,25 @@ class Transaction extends Model
      *
      * @return void
      */
+    /**
+     * Label metode pembayaran untuk struk (huruf besar).
+     * Dipakai semua output cetak: struk 58mm, 80mm (PDF) dan cetak langsung
+     * ESC/POS (QZ Tray / RawBT), supaya labelnya selalu sama.
+     */
+    public static function receiptPaymentLabel(?string $method): string
+    {
+        $method = strtolower((string) ($method ?: 'cash'));
+
+        return match ($method) {
+            'cash' => 'TUNAI',
+            'bank_transfer' => 'TRANSFER BANK',
+            'qris_static', 'midtrans', 'xendit', 'doku', 'flip' => 'QRIS',
+            'pay_later' => 'PIUTANG',
+            'dual_cash_qris' => 'TUNAI+QRIS',
+            default => strtoupper(str_replace('_', ' ', $method)),
+        };
+    }
+
     public function details()
     {
         return $this->hasMany(TransactionDetail::class);

@@ -7,7 +7,7 @@ import {
 } from "@tabler/icons-react";
 import { isSuperAdmin } from "@/Utils/authorization";
 
-export default function LinkItemDropdown({ icon, title, data, access, sidebarOpen, ...props }) {
+export default function LinkItemDropdown({ icon, title, data, access, sidebarOpen, onNavigate, ...props }) {
     const { url } = usePage();
     const [isOpen, setIsOpen] = useState(false);
     const { auth } = usePage().props;
@@ -55,6 +55,7 @@ export default function LinkItemDropdown({ icon, title, data, access, sidebarOpe
                     <Link
                         key={index}
                         href={item.href}
+                        onClick={onNavigate}
                         className={`${
                             url === item.href &&
                             "border-r-2 border-r-gray-400 bg-gray-100 text-gray-700 dark:border-r-gray-500 dark:bg-gray-900 dark:text-white"

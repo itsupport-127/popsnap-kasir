@@ -222,6 +222,12 @@ class SalesReturnController extends Controller
                 }
             }
 
+            // Total harga semua baris di transaksi ini (buat alokasikan diskon
+            // manual secara proporsional — persis rumus yang dipakai pas
+            // checkout di TransactionController).
+            $transaction = $salesReturn->transaction;
+            $transactionLineTotal = (int) $transaction->details()->sum('price');
+
             foreach ($salesReturn->items as $item) {
                 if ($item->restock_to_inventory && $item->product) {
                     $product = $item->product()->lockForUpdate()->first();
@@ -247,7 +253,26 @@ class SalesReturnController extends Controller
 
                 $detail = $item->transactionDetail;
                 $buyPrice = (int) ($item->product?->buy_price ?? 0);
-                $margin = ((int) $detail->price - $buyPrice) * (int) $item->qty_return;
+
+                // PENTING: $detail->price adalah TOTAL harga se-baris (qty
+                // penuh), bukan harga per-unit. Sebelumnya kode ini salah
+                // pakai $detail->price langsung dikali qty_return lagi —
+                // bikin margin salah kalau qty_sold > 1 atau retur sebagian
+                // (nggak full return). Sekarang: hitung ulang profit ASLI
+                // baris itu (net setelah alokasi diskon manual, dikurangi
+                // modal buat qty_sold penuh), lalu ambil porsi yang sesuai
+                // dengan qty yang diretur.
+                $qtySold = (int) $detail->qty;
+                $linePrice = (int) $detail->price;
+
+                $allocatedDiscount = $transactionLineTotal > 0
+                    ? (int) round($transaction->discount * ($linePrice / $transactionLineTotal))
+                    : 0;
+
+                $originalLineProfit = ($linePrice - $allocatedDiscount) - ($buyPrice * $qtySold);
+
+                $qtyRatio = $qtySold > 0 ? ($item->qty_return / $qtySold) : 0;
+                $margin = (int) round($originalLineProfit * $qtyRatio);
 
                 Profit::create([
                     'transaction_id' => $salesReturn->transaction_id,
@@ -342,7 +367,9 @@ class SalesReturnController extends Controller
                 'cashier:id,name',
                 'customer:id,name',
                 'receivable',
-                'details.product:id,title,barcode,sku,buy_price',
+                'details.product' => function ($q) {
+                    $q->withTrashed()->select('id', 'title', 'barcode', 'sku', 'buy_price');
+                },
                 'details.salesReturnItems.salesReturn:id,status',
             ])
             ->when(! $request->user()->isSuperAdmin(), fn (Builder $query) => $query->where('cashier_id', $request->user()->id))

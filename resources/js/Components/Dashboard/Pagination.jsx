@@ -3,23 +3,30 @@ import { Link } from '@inertiajs/react';
 import { IconChevronRight, IconChevronLeft } from '@tabler/icons-react';
 export default function Pagination({ links }) {
 
-    const style = 'p-1 text-sm border rounded-md bg-white text-gray-500 hover:bg-gray-100 dark:bg-gray-950 dark:text-gray-400 dark:hover:bg-gray-900 dark:border-gray-900'
+    const base = 'inline-flex items-center justify-center min-w-[32px] h-8 px-2 text-sm border rounded-md transition-colors'
+    const idle = 'bg-white text-gray-500 border-gray-200 hover:bg-gray-100 dark:bg-gray-950 dark:text-gray-400 dark:hover:bg-gray-900 dark:border-gray-800'
+    const active = 'bg-primary-500 text-white border-primary-500 font-semibold shadow-sm dark:bg-primary-500 dark:text-white dark:border-primary-500'
 
     return (
         <>
-            <ul className="mt-2 lg:mt-5 justify-end flex items-center gap-1">
+            <ul className="mt-4 lg:mt-5 justify-end flex flex-wrap items-center gap-1">
                 {links.map((item, i) => {
                     return item.url != null ? (
                         item.label.includes('Previous') ? (
-                            <Link className={style} key={i} href={item.url}>
-                                <IconChevronLeft size={'20'} strokeWidth={'1.5'} />
+                            <Link className={`${base} ${idle}`} key={i} href={item.url} aria-label="Sebelumnya">
+                                <IconChevronLeft size={'18'} strokeWidth={'1.5'} />
                             </Link>
                         ) : item.label.includes('Next') ? (
-                            <Link className={style} key={i} href={item.url}>
-                                <IconChevronRight size={'20'} strokeWidth={'1.5'} />
+                            <Link className={`${base} ${idle}`} key={i} href={item.url} aria-label="Berikutnya">
+                                <IconChevronRight size={'18'} strokeWidth={'1.5'} />
                             </Link>
                         ) : (
-                            <Link className={`px-2 py-1 text-sm border  rounded-md text-gray-500 hover:bg-gray-100 dark:text-gray-400 dark:hover:bg-gray-900 dark:border-gray-900 ${item.active ? 'bg-white text-gray-700 dark:bg-gray-900 dark:text-gray-50' : 'bg-white dark:bg-gray-950'}`} key={i} href={item.url}>
+                            <Link
+                                className={`${base} ${item.active ? active : idle}`}
+                                key={i}
+                                href={item.url}
+                                aria-current={item.active ? 'page' : undefined}
+                            >
                                 {item.label}
                             </Link>
                         )

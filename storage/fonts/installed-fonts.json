@@ -1,8 +1,8 @@
 {
     "inter": {
-        "normal": "D:\\IT Support\\Code\\Popsnap-Kasir\\storage\\fonts\/inter_normal_753a09aea88dde6f7b748deacf1ff10f",
-        "500": "D:\\IT Support\\Code\\Popsnap-Kasir\\storage\\fonts\/inter_500_1e901afe03ae55577163a81ca2b53e3c",
-        "600": "D:\\IT Support\\Code\\Popsnap-Kasir\\storage\\fonts\/inter_600_9d9ea2b945c79aba9ae401e06c142e83",
-        "bold": "inter_bold_200e6f083f18f6dfe0e70ddc742358cb"
+        "normal": "\/var\/www\/html\/storage\/fonts\/inter_normal_4c4a6e6f72dfd594eb3f65cd47aaa3dc",
+        "500": "\/var\/www\/html\/storage\/fonts\/inter_500_5d2c92e538213284b7d19fe623bb52ae",
+        "600": "\/var\/www\/html\/storage\/fonts\/inter_600_de877c4dce6f9939d88b64ee27538830",
+        "bold": "inter_bold_a0b4be0ccde09e6cd9080f0558695e4d"
     }
 }

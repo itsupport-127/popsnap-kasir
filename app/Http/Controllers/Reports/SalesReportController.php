@@ -28,7 +28,9 @@ class SalesReportController extends Controller
 
         $baseListQuery = $this->applyFilters(
             Transaction::query()
-                ->with(['cashier:id,name', 'customer:id,name'])
+                ->with(['cashier:id,name', 'customer:id,name', 'details.product' => function ($q) {
+                    $q->withTrashed()->select('id', 'title', 'image');
+                }])
                 ->withSum('details as total_items', 'qty')
                 ->withSum('profits as total_profit', 'total'),
             $filters
@@ -84,6 +86,11 @@ class SalesReportController extends Controller
     protected function applyFilters($query, array $filters)
     {
         return $query
+            // Hanya transaksi yang benar-benar sudah dibayar yang dihitung sebagai
+            // penjualan. Transaksi 'pending' (QRIS belum dibayar) atau 'failed'
+            // (gagal/expired) tidak masuk laporan — konsisten dengan
+            // CashierShiftService::calculateSummary.
+            ->where('payment_status', 'paid')
             ->when($filters['invoice'] ?? null, fn ($q, $invoice) => $q->where('invoice', 'like', '%'.$invoice.'%'))
             ->when($filters['cashier_id'] ?? null, fn ($q, $cashier) => $q->where('cashier_id', $cashier))
             ->when($filters['customer_id'] ?? null, fn ($q, $customer) => $q->where('customer_id', $customer))

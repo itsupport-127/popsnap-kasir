@@ -220,8 +220,29 @@
                 <div style="color:#64748b;font-weight:600;">Kasir</div>
                 <div style="font-weight:700; margin-top:2px;">{{ $transaction->cashier->name ?? '-' }}</div>
                 <div style="margin-top:6px;">
-                    <div><strong>Status:</strong> {{ $transaction->payment_status }}</div>
-                    <div><strong>Metode:</strong> {{ $transaction->payment_method }}</div>
+                    @php
+                        $invoicePaymentLabels = [
+                            'cash' => 'Tunai',
+                            'bank_transfer' => 'Transfer Bank',
+                            'qris_static' => 'QRIS',
+                            'midtrans' => 'QRIS',
+                            'xendit' => 'QRIS',
+                            'doku' => 'QRIS',
+                            'flip' => 'QRIS',
+                            'pay_later' => 'Piutang',
+                            'dual_cash_qris' => 'Tunai + QRIS',
+                        ];
+                        $invoiceStatusLabels = [
+                            'paid' => 'Lunas',
+                            'pending' => 'Menunggu',
+                            'failed' => 'Gagal',
+                            'expired' => 'Kedaluwarsa',
+                            'unpaid' => 'Belum Lunas',
+                            'partial' => 'Parsial',
+                        ];
+                    @endphp
+                    <div><strong>Status:</strong> {{ $invoiceStatusLabels[$transaction->payment_status] ?? $transaction->payment_status }}</div>
+                    <div><strong>Metode:</strong> {{ $invoicePaymentLabels[$transaction->payment_method] ?? $transaction->payment_method }}</div>
                     @if ($transaction->receivable && $transaction->receivable->due_date)
                         <div><strong>Jatuh tempo:</strong> {{ $transaction->receivable->due_date }}</div>
                     @endif

@@ -14,6 +14,7 @@ import {
     IconSearch,
     IconBarcode,
     IconPrinter,
+    IconCoin,
 } from "@tabler/icons-react";
 import Search from "@/Components/Dashboard/Search";
 import Table from "@/Components/Dashboard/Table";
@@ -128,6 +129,11 @@ function ProductCard({
                     <span className="px-2 py-0.5 text-xs font-medium bg-primary-100 dark:bg-primary-900/50 text-primary-700 dark:text-primary-400 rounded-md truncate">
                         {product.category?.name || "Kategori"}
                     </span>
+                    {product.is_sellable === false && (
+                        <span className="px-2 py-0.5 text-xs font-medium bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300 rounded-md shrink-0">
+                            Internal
+                        </span>
+                    )}
                 </div>
                 <h3 className="text-sm font-semibold text-slate-800 dark:text-slate-200 line-clamp-2 mb-1">
                     {product.title}
@@ -247,6 +253,15 @@ export default function Index({ products }) {
                             <IconBarcode size={18} />
                             Cetak All Barcode
                         </button>
+                        {canEditProducts && (
+                            <Link
+                                href={route("products.bulk-prices")}
+                                className="inline-flex items-center justify-center gap-2 px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 text-sm font-medium text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors w-full sm:w-auto"
+                            >
+                                <IconCoin size={18} />
+                                Atur Harga
+                            </Link>
+                        )}
                         {canCreateProducts && (
                             <Button
                                 type={"link"}
@@ -333,7 +348,7 @@ export default function Index({ products }) {
             {products.data.length > 0 ? (
                 viewMode === "grid" ? (
                     /* Grid View */
-                    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
+                    <div className="grid grid-cols-2 lg:grid-cols-4 xl:grid-cols-5 gap-3 sm:gap-4">
                         {products.data.map((product, i) => (
                             <ProductCard
                                 key={product.id}
@@ -393,8 +408,13 @@ export default function Index({ products }) {
                                                     )}
                                                 </div>
                                                 <div>
-                                                    <p className="text-sm font-medium text-slate-800 dark:text-slate-200">
+                                                    <p className="text-sm font-medium text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
                                                         {product.title}
+                                                        {product.is_sellable === false && (
+                                                            <span className="px-1.5 py-0.5 text-[10px] font-medium bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300 rounded">
+                                                                Internal
+                                                            </span>
+                                                        )}
                                                     </p>
                                                     <div className="text-xs text-slate-500 dark:text-slate-400 space-y-0.5">
                                                         {product.barcode && (

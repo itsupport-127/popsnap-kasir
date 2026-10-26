@@ -5,7 +5,7 @@ import LinkItem from "@/Components/Dashboard/LinkItem";
 import LinkItemDropdown from "@/Components/Dashboard/LinkItemDropdown";
 import Menu from "@/Utils/Menu";
 
-export default function Sidebar({ sidebarOpen }) {
+export default function Sidebar({ sidebarOpen, onNavigate }) {
     const { auth, storeProfile } = usePage().props;
     const menuNavigation = Menu();
 
@@ -105,6 +105,7 @@ export default function Sidebar({ sidebarOpen }) {
                                                 data={detail.subdetails}
                                                 access={detail.permissions}
                                                 sidebarOpen={sidebarOpen}
+                                                onNavigate={onNavigate}
                                             />
                                         );
                                     }
@@ -117,6 +118,7 @@ export default function Sidebar({ sidebarOpen }) {
                                             href={detail.href}
                                             access={detail.permissions}
                                             sidebarOpen={sidebarOpen}
+                                            onNavigate={onNavigate}
                                         />
                                     );
                                 })}

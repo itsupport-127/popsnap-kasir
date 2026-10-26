@@ -10,6 +10,7 @@ import {
     IconPencil,
     IconSearch,
     IconTrash,
+    IconCopy,
     IconBolt,
     IconTicket,
 } from "@tabler/icons-react";
@@ -59,6 +60,12 @@ const customerScopeLabel = (promo) => {
     if (promo.customer_scope === "registered") return "Pelanggan Terdaftar";
     if (promo.customer_scope === "member") return "Member";
     return "Semua Pelanggan";
+};
+
+const paymentMethodLabel = (promo) => {
+    if (promo.payment_method_restriction === "cashless_only") return "Cashless saja";
+    if (promo.payment_method_restriction === "cash_only") return "Tunai saja";
+    return null;
 };
 
 const kindLabel = (kind) => {
@@ -200,6 +207,7 @@ export default function Index({ promos, filters, summary = {}, recentAudits = []
                                 <Table.Th>Scope</Table.Th>
                                 <Table.Th>Jenis</Table.Th>
                                 <Table.Th>Benefit</Table.Th>
+                                <Table.Th>Pemakaian</Table.Th>
                                 <Table.Th>Status</Table.Th>
                                 <Table.Th className="w-28 text-center">Aksi</Table.Th>
                             </tr>
@@ -250,6 +258,11 @@ export default function Index({ promos, filters, summary = {}, recentAudits = []
                                         <Table.Td>{targetLabel(promo)}</Table.Td>
                                         <Table.Td className="max-w-[160px] truncate">
                                             {customerScopeLabel(promo)}
+                                            {paymentMethodLabel(promo) && (
+                                                <span className="mt-1 flex w-fit items-center gap-1 rounded-full bg-indigo-100 px-2 py-0.5 text-[11px] font-medium text-indigo-700 dark:bg-indigo-950/30 dark:text-indigo-300">
+                                                    {paymentMethodLabel(promo)}
+                                                </span>
+                                            )}
                                         </Table.Td>
                                         <Table.Td>
                                             <span className="inline-flex rounded-full bg-slate-100 px-2.5 py-1 text-xs font-semibold text-slate-700 dark:bg-slate-800 dark:text-slate-200">
@@ -257,6 +270,12 @@ export default function Index({ promos, filters, summary = {}, recentAudits = []
                                             </span>
                                         </Table.Td>
                                         <Table.Td>{discountLabel(promo)}</Table.Td>
+                                        <Table.Td>
+                                            <span className="text-sm font-medium text-slate-700 dark:text-slate-300">
+                                                {promo.used_count ?? 0}
+                                                {promo.max_uses ? ` / ${promo.max_uses}` : "x"}
+                                            </span>
+                                        </Table.Td>
                                         <Table.Td>
                                             <span
                                                 className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${
@@ -269,6 +288,30 @@ export default function Index({ promos, filters, summary = {}, recentAudits = []
                                         </Table.Td>
                                         <Table.Td className="text-center">
                                             <div className="flex items-center justify-center gap-2">
+                                                <Link
+                                                    href={route("promos.usage", promo.id)}
+                                                    className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-blue-200 bg-blue-50 text-blue-600 hover:bg-blue-100 dark:border-blue-800 dark:bg-blue-950/30 dark:text-blue-300"
+                                                    title="Lihat pemakaian"
+                                                >
+                                                    <IconChartInfographic size={16} />
+                                                </Link>
+                                                {can("promos-create") && (
+                                                    <button
+                                                        type="button"
+                                                        title="Duplikat promo"
+                                                        onClick={() =>
+                                                            router.post(
+                                                                route(
+                                                                    "promos.duplicate",
+                                                                    promo.id
+                                                                )
+                                                            )
+                                                        }
+                                                        className="inline-flex h-9 w-9 items-center justify-center rounded-xl border border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800/60 dark:text-slate-300"
+                                                    >
+                                                        <IconCopy size={16} />
+                                                    </button>
+                                                )}
                                                 {can("promos-update") && (
                                                     <Link
                                                         href={route("promos.edit", promo.id)}
@@ -291,7 +334,7 @@ export default function Index({ promos, filters, summary = {}, recentAudits = []
                                 ))
                             ) : (
                                 <Table.Empty
-                                    colSpan={8}
+                                    colSpan={9}
                                     message="Belum ada promo."
                                 >
                                     <div className="mx-auto mb-3 flex h-16 w-16 items-center justify-center rounded-full bg-slate-100 dark:bg-slate-800">

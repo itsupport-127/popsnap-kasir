@@ -3,6 +3,7 @@ import DashboardLayout from "@/Layouts/DashboardLayout";
 import Pagination from "@/Components/Dashboard/Pagination";
 import Table from "@/Components/Dashboard/Table";
 import { Head, Link, router } from "@inertiajs/react";
+import { useAuthorization } from "@/Utils/authorization";
 import {
     IconCirclePlus,
     IconCrown,
@@ -26,7 +27,24 @@ const formatDate = (value) =>
           }).format(new Date(value))
         : "-";
 
-export default function Index({ members, filters, tierOptions, summary }) {
+export default function Index({
+    members,
+    filters,
+    tierOptions,
+    summary,
+    registrationEnabled = true,
+}) {
+    const { can } = useAuthorization();
+    const canToggleRegistration = can("members-toggle-registration");
+
+    const handleToggleRegistration = () => {
+        router.post(
+            route("members.registration-toggle"),
+            { enabled: !registrationEnabled },
+            { preserveScroll: true, preserveState: true }
+        );
+    };
+
     const handleFilterChange = (key, value) => {
         router.get(
             route("members.index"),
@@ -83,6 +101,46 @@ export default function Index({ members, filters, tierOptions, summary }) {
                         Daftarkan Member
                     </Link>
                 </div>
+
+                {canToggleRegistration && (
+                <div className="mb-4 flex items-center justify-between gap-4 rounded-2xl border border-primary-100 bg-primary-50/70 p-4 dark:border-primary-900/40 dark:bg-primary-950/20">
+                    <div className="flex items-start gap-3">
+                        <div className="mt-0.5 rounded-xl bg-white/80 p-2 text-primary-600 dark:bg-slate-900/70 dark:text-primary-300">
+                            <IconCrown size={18} />
+                        </div>
+                        <div>
+                            <p className="text-sm font-semibold text-slate-900 dark:text-white">
+                                Registrasi Member di Kasir
+                            </p>
+                            <p className="text-xs text-slate-500 dark:text-slate-400">
+                                Jika aktif, opsi "Registrasi Member" muncul di form Tambah Pelanggan pada halaman kasir. Jika nonaktif, pelanggan baru dari kasir otomatis non-member.
+                            </p>
+                        </div>
+                    </div>
+                    <button
+                        type="button"
+                        role="switch"
+                        aria-checked={registrationEnabled}
+                        onClick={handleToggleRegistration}
+                        className={`relative inline-flex h-7 w-12 shrink-0 items-center rounded-full transition-colors ${
+                            registrationEnabled
+                                ? "bg-primary-500"
+                                : "bg-slate-300 dark:bg-slate-600"
+                        }`}
+                    >
+                        <span
+                            className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition-transform ${
+                                registrationEnabled
+                                    ? "translate-x-6"
+                                    : "translate-x-1"
+                            }`}
+                        />
+                        <span className="sr-only">
+                            {registrationEnabled ? "Aktif" : "Nonaktif"}
+                        </span>
+                    </button>
+                </div>
+                )}
 
                 <div className="mb-4 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
                     {summaryCards.map((card) => (

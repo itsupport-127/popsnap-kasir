@@ -2,12 +2,14 @@
 
 namespace App\Services;
 
+use App\Mail\CashierShiftClosingReportMail;
 use App\Models\CashierShift;
 use App\Models\SalesReturn;
 use App\Models\Transaction;
 use App\Models\User;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Mail;
 use Illuminate\Validation\ValidationException;
 
 class CashierShiftService
@@ -82,9 +84,21 @@ class CashierShiftService
             ->where('payment_status', 'paid')
             ->sum('grand_total');
 
+        $cashSalesTotal += (int) (clone $transactions)
+            ->where('payment_method', 'dual_cash_qris')
+            ->sum('dual_cash');
+
         $nonCashSalesTotal = (int) (clone $transactions)
             ->where('payment_method', '!=', 'cash')
             ->sum('grand_total');
+
+        $nonCashSalesTotal -= (int) (clone $transactions)
+            ->where('payment_method', 'dual_cash_qris')
+            ->sum('grand_total');
+
+        $nonCashSalesTotal += (int) (clone $transactions)
+            ->where('payment_method', 'dual_cash_qris')
+            ->sum('dual_qris');
 
         $cashRefundTotal = (int) (clone $salesReturns)
             ->where('return_type', 'refund_cash')
@@ -114,7 +128,9 @@ class CashierShiftService
         User $actor,
         int $actualCash,
         ?string $closeNotes = null,
-        bool $forceClose = false
+        bool $forceClose = false,
+        int $expenseTotal = 0,
+        ?string $expenseNotes = null
     ): CashierShift {
         if (! $shift->isOpen()) {
             throw ValidationException::withMessages([
@@ -122,7 +138,7 @@ class CashierShiftService
             ]);
         }
 
-        return DB::transaction(function () use ($shift, $actor, $actualCash, $closeNotes, $forceClose) {
+        return DB::transaction(function () use ($shift, $actor, $actualCash, $closeNotes, $forceClose, $expenseTotal, $expenseNotes) {
             $lockedShift = CashierShift::query()->lockForUpdate()->findOrFail($shift->id);
 
             if (! $lockedShift->isOpen()) {
@@ -132,18 +148,60 @@ class CashierShiftService
             }
 
             $summary = $this->calculateSummary($lockedShift);
-            $cashDifference = $actualCash - $summary['expected_cash'];
+
+            // Pengeluaran (mis. selisih kembalian atau belanja galon yang diambil
+            // dari laci kas) mengurangi kas yang seharusnya ada secara fisik,
+            // sehingga dinetkan ke ekspektasi kas sebelum menghitung selisih.
+            $adjustedExpectedCash = $summary['expected_cash'] - $expenseTotal;
+            $cashDifference = $actualCash - $adjustedExpectedCash;
 
             $lockedShift->update([
                 ...$summary,
                 'actual_cash' => $actualCash,
                 'cash_difference' => $cashDifference,
+                'expense_total' => $expenseTotal,
+                'expense_notes' => $expenseNotes,
                 'closed_at' => now(),
                 'closed_by' => $actor->id,
                 'close_notes' => $closeNotes,
                 'status' => $forceClose
                     ? CashierShift::STATUS_FORCE_CLOSED
                     : CashierShift::STATUS_CLOSED,
+            ]);
+
+            return $lockedShift->fresh(['user:id,name', 'openedBy:id,name', 'closedBy:id,name']);
+        });
+    }
+
+    public function updateExpenses(
+        CashierShift $shift,
+        User $actor,
+        int $expenseTotal = 0,
+        ?string $expenseNotes = null,
+        ?int $actualCash = null
+    ): CashierShift {
+        return DB::transaction(function () use ($shift, $expenseTotal, $expenseNotes, $actualCash) {
+            $lockedShift = CashierShift::query()->lockForUpdate()->findOrFail($shift->id);
+
+            // actual_cash cuma diganti kalau memang dikirim (buat koreksi kas
+            // fisik yang kepencet salah pas nutup shift). Kalau nggak dikirim,
+            // pakai nilai yang sudah tersimpan — nggak boleh ke-null-kan
+            // begitu aja.
+            $newActualCash = $actualCash ?? $lockedShift->actual_cash;
+
+            // Pengeluaran mengurangi kas yang diharapkan ada secara fisik, sehingga
+            // selisih closing dihitung ulang agar kartu penutupan tetap konsisten
+            // meskipun pengeluaran diedit setelah shift ditutup.
+            $adjustedExpectedCash = (int) $lockedShift->expected_cash - $expenseTotal;
+            $cashDifference = $newActualCash !== null
+                ? (int) $newActualCash - $adjustedExpectedCash
+                : null;
+
+            $lockedShift->update([
+                'actual_cash' => $newActualCash,
+                'expense_total' => $expenseTotal,
+                'expense_notes' => $expenseNotes,
+                'cash_difference' => $cashDifference,
             ]);
 
             return $lockedShift->fresh(['user:id,name', 'openedBy:id,name', 'closedBy:id,name']);
@@ -179,5 +237,37 @@ class CashierShiftService
         }
 
         return $query->where('user_id', $user->id);
+    }
+
+    public function reportRecipients(): array
+    {
+        return config('cashier_shift_report.recipients', []);
+    }
+
+    public function sendClosingReportEmail(CashierShift $shift, User $actor): CashierShift
+    {
+        if ($shift->isOpen()) {
+            throw ValidationException::withMessages([
+                'shift' => 'Shift harus ditutup terlebih dahulu sebelum mengirim laporan email.',
+            ]);
+        }
+
+        $recipients = $this->reportRecipients();
+
+        if (empty($recipients)) {
+            throw ValidationException::withMessages([
+                'email' => 'Belum ada penerima email laporan tutup kasir yang dikonfigurasi.',
+            ]);
+        }
+
+        Mail::to($recipients)->send(new CashierShiftClosingReportMail($shift));
+
+        $shift->update([
+            'report_email_sent_at' => now(),
+            'report_email_sent_to' => implode(', ', $recipients),
+            'report_email_sent_by' => $actor->id,
+        ]);
+
+        return $shift->fresh(['user:id,name', 'openedBy:id,name', 'closedBy:id,name', 'reportEmailSentBy:id,name']);
     }
 }

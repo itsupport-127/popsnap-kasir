@@ -1,6 +1,26 @@
 import React from "react";
 
 /**
+ * Label metode pembayaran di struk — harus sama dengan
+ * Transaction::receiptPaymentLabel() di backend (PDF & cetak langsung).
+ */
+export function receiptPaymentLabel(method) {
+    const key = String(method || "cash").toLowerCase();
+    const labels = {
+        cash: "TUNAI",
+        bank_transfer: "TRANSFER BANK",
+        qris_static: "QRIS",
+        midtrans: "QRIS",
+        xendit: "QRIS",
+        doku: "QRIS",
+        flip: "QRIS",
+        pay_later: "PIUTANG",
+        dual_cash_qris: "TUNAI+QRIS",
+    };
+    return labels[key] ?? key.replace(/_/g, " ").toUpperCase();
+}
+
+/**
  * ThermalReceipt - Receipt template optimized for thermal printers (58mm/80mm)
  *
  * Features:
@@ -33,8 +53,16 @@ export default function ThermalReceipt({
     };
 
     const items = transaction?.details ?? [];
+    // "discount_total" per item itu GABUNGAN promo otomatis + voucher +
+    // diskon manual per-item — porsi voucher & diskon-item harus dikurangi
+    // dulu supaya "Promo" nggak dobel-hitung sama baris Voucher/Diskon
+    // Manual yang ditampilkan terpisah di bawah.
+    const itemManualDiscountTotal = items.reduce(
+        (sum, item) => sum + Number(item.item_manual_discount || 0),
+        0
+    );
     const promoDiscount = items.reduce(
-        (sum, item) => sum + Number(item.discount_total || 0),
+        (sum, item) => sum + Number(item.discount_total || 0) - Number(item.voucher_discount || 0) - Number(item.item_manual_discount || 0),
         0
     );
     const loyaltyDiscount = Number(transaction?.loyalty_discount_total || 0);
@@ -43,14 +71,14 @@ export default function ThermalReceipt({
     );
 
     // Calculate totals
+    const discount = (transaction?.discount || 0) + itemManualDiscountTotal;
     const subtotal =
         (transaction?.grand_total || 0) +
-        (transaction?.discount || 0) -
+        discount -
         (transaction?.shipping_cost || 0) +
         promoDiscount +
         loyaltyDiscount +
         voucherDiscount;
-    const discount = transaction?.discount || 0;
     const total = transaction?.grand_total || 0;
     const shipping = transaction?.shipping_cost || 0;
     const cash = transaction?.cash || 0;
@@ -58,20 +86,15 @@ export default function ThermalReceipt({
     const isDualPayment = transaction?.payment_method === 'dual_cash_qris';
     const dualCash = transaction?.dual_cash || 0;
     const dualQris = transaction?.dual_qris || 0;
+    // Field "cash" di database CUMA keisi kalau bayar tunai — buat metode
+    // non-tunai (QRIS/transfer/gateway online) kolom itu memang selalu 0,
+    // jadi kalau langsung dipakai buat nampilin "Bayar" akan salah nampilin
+    // Rp 0 walau pelanggan sudah bayar lunas. Nota belum dibayar (pay_later)
+    // sengaja tetap ditampilkan Rp 0, karena memang belum ada yang dibayar.
+    const isPayLater = transaction?.payment_method === 'pay_later';
+    const paidAmount = transaction?.payment_method === 'cash' || isPayLater ? cash : total;
 
-    const paymentLabels = {
-        cash: "TUNAI",
-        midtrans: "MIDTRANS",
-        xendit: "XENDIT",
-        qris_static: "QRIS",
-        doku: "DOKU QRIS",
-        flip: "FLIP",
-        bank_transfer: "TRANSFER BANK",
-        dual_cash_qris: "TUNAI+QRIS",
-    };
-    const paymentMethod = isDualPayment
-        ? "TUNAI+QRIS"
-        : paymentLabels[transaction?.payment_method?.toLowerCase()] || "TUNAI";
+    const paymentMethod = receiptPaymentLabel(transaction?.payment_method);
 
     // Line separator
     const line = "=".repeat(32);
@@ -241,7 +264,7 @@ export default function ThermalReceipt({
                     <>
                         <div className="flex justify-between">
                             <span>Bayar ({paymentMethod})</span>
-                            <span>{formatPrice(cash)}</span>
+                            <span>{formatPrice(paidAmount)}</span>
                         </div>
                         {change > 0 && (
                             <div className="flex justify-between font-bold">
@@ -307,27 +330,30 @@ export function ThermalReceipt58mm({
     const isDualPayment = transaction?.payment_method === "dual_cash_qris";
     const dualCash = transaction?.dual_cash || 0;
     const dualQris = transaction?.dual_qris || 0;
-    const paymentLabels = {
-        cash: "TUNAI", bank_transfer: "TRANSFER", qris_static: "QRIS",
-        dual_cash_qris: "TUNAI+QRIS", pay_later: "PIUTANG",
-        midtrans: "MIDTRANS", xendit: "XENDIT", doku: "DOKU", flip: "FLIP",
-    };
-    const paymentMethod = isDualPayment
-        ? "TUNAI+QRIS"
-        : paymentLabels[transaction?.payment_method?.toLowerCase()] || "TUNAI";
+    const paymentMethod = receiptPaymentLabel(transaction?.payment_method);
 
-    const promoDiscount = items.reduce((sum, item) => sum + Number(item.discount_total || 0), 0);
+    // "discount_total" per item itu GABUNGAN promo otomatis + voucher +
+    // diskon manual per-item — porsi voucher & diskon-item harus dikurangi
+    // dulu supaya "Promo" nggak dobel-hitung sama baris Voucher/Diskon
+    // Manual yang ditampilkan terpisah di bawah.
+    const itemManualDiscountTotal = items.reduce((sum, item) => sum + Number(item.item_manual_discount || 0), 0);
+    const promoDiscount = items.reduce((sum, item) => sum + Number(item.discount_total || 0) - Number(item.voucher_discount || 0) - Number(item.item_manual_discount || 0), 0);
     const loyaltyDiscount = Number(transaction?.loyalty_discount_total || 0);
     const voucherDiscount = Number(transaction?.customer_voucher_discount || 0);
+    const discount  = (transaction?.discount || 0) + itemManualDiscountTotal;
     const subtotal =
         (transaction?.grand_total || 0) +
-        (transaction?.discount || 0) -
+        discount -
         (transaction?.shipping_cost || 0) +
         promoDiscount + loyaltyDiscount + voucherDiscount;
-    const discount  = transaction?.discount || 0;
     const total     = transaction?.grand_total || 0;
     const shipping  = transaction?.shipping_cost || 0;
     const cash      = transaction?.cash || 0;
+    // Sama seperti komponen struk yang satunya di atas — "cash" cuma valid
+    // ditampilkan buat metode bayar tunai, selainnya pakai grand_total.
+    const paidAmount = transaction?.payment_method === 'cash' || transaction?.payment_method === 'pay_later'
+        ? cash
+        : total;
     const change    = transaction?.change || 0;
 
     const line     = "=".repeat(24);
@@ -391,14 +417,16 @@ export function ThermalReceipt58mm({
                     const qty = Number(item.qty) || 1;
                     const itemTotal = Number(item.price) || 0;
                     const unitPrice = Number(item.unit_price || 0) || itemTotal / qty;
-                    const baseUnitPrice = Number(item.base_unit_price || 0) || unitPrice;
+                    const lineDiscount = Number(item.discount_total || 0);
                     return (
                         <div key={item.id || index} className="mb-1">
                             <p className="truncate">{item.product?.title}</p>
-                            {Number(item.discount_total || 0) > 0 && baseUnitPrice > unitPrice && (
+                            {lineDiscount > 0 && (
                                 <div className="flex justify-between text-[9px]">
-                                    <span>Promo</span>
-                                    <span>{formatPrice(baseUnitPrice)}</span>
+                                    <span className="truncate">
+                                        {item.pricing_rule_name || "Diskon"}
+                                    </span>
+                                    <span>-{formatPrice(lineDiscount)}</span>
                                 </div>
                             )}
                             <div className="flex justify-between">
@@ -479,7 +507,7 @@ export function ThermalReceipt58mm({
                     <>
                         <div className="flex justify-between">
                             <span>Bayar ({paymentMethod})</span>
-                            <span>{formatPrice(cash)}</span>
+                            <span>{formatPrice(paidAmount)}</span>
                         </div>
                         {change > 0 && (
                             <div className="flex justify-between font-bold">

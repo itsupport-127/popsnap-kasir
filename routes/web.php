@@ -10,6 +10,7 @@ use App\Http\Controllers\Apps\CustomerSegmentController;
 use App\Http\Controllers\Apps\GoodsReceivingController;
 use App\Http\Controllers\Apps\MemberController;
 use App\Http\Controllers\Apps\PaymentSettingController;
+use App\Http\Controllers\Apps\PhotoboxTransactionController;
 use App\Http\Controllers\Apps\PromoController;
 use App\Http\Controllers\Apps\ProductController;
 use App\Http\Controllers\Apps\PurchaseOrderController;
@@ -84,6 +85,8 @@ Route::group(['prefix' => 'dashboard', 'middleware' => ['auth', 'verified']], fu
         ->middlewareFor(['edit', 'update'], 'permission:products-edit')
         ->middlewareFor('destroy', 'permission:products-delete');
     Route::post('products/{product}/adjust-stock', [ProductController::class, 'adjustStock'])->middleware('permission:products-edit')->name('products.adjust-stock');
+    Route::get('products-bulk-prices', [ProductController::class, 'bulkPrices'])->middleware('permission:products-edit')->name('products.bulk-prices');
+    Route::post('products-bulk-prices', [ProductController::class, 'bulkPricesUpdate'])->middleware('permission:products-edit')->name('products.bulk-prices.update');
     Route::resource('promos', PromoController::class)
         ->except(['show'])
         ->middlewareFor('index', 'permission:promos-access')
@@ -93,26 +96,45 @@ Route::group(['prefix' => 'dashboard', 'middleware' => ['auth', 'verified']], fu
     Route::post('promos/preview', [PromoController::class, 'preview'])
         ->middleware('permission:promos-access')
         ->name('promos.preview');
+    Route::post('promos/{promo}/duplicate', [PromoController::class, 'duplicate'])
+        ->middleware('permission:promos-create')
+        ->name('promos.duplicate');
+    Route::get('promos/{promo}/usage', [PromoController::class, 'usage'])
+        ->middleware('permission:promos-access')
+        ->name('promos.usage');
     Route::get('stock-opnames', [StockOpnameController::class, 'index'])->middleware('permission:stock-opnames-access')->name('stock-opnames.index');
     Route::get('stock-opnames/create', [StockOpnameController::class, 'create'])->middleware('permission:stock-opnames-create')->name('stock-opnames.create');
     Route::post('stock-opnames', [StockOpnameController::class, 'store'])->middleware('permission:stock-opnames-create')->name('stock-opnames.store');
     Route::get('stock-opnames/{stockOpname}', [StockOpnameController::class, 'show'])->middleware('permission:stock-opnames-access')->name('stock-opnames.show');
     Route::patch('stock-opnames/{stockOpname}', [StockOpnameController::class, 'update'])->middleware('permission:stock-opnames-create')->name('stock-opnames.update');
     Route::post('stock-opnames/{stockOpname}/items', [StockOpnameController::class, 'storeItem'])->middleware('permission:stock-opnames-create')->name('stock-opnames.items.store');
+    Route::post('stock-opnames/{stockOpname}/items/bulk', [StockOpnameController::class, 'storeItemsBulk'])->middleware('permission:stock-opnames-create')->name('stock-opnames.items.store-bulk');
+    Route::post('stock-opnames/{stockOpname}/duplicate', [StockOpnameController::class, 'duplicate'])->middleware('permission:stock-opnames-create')->name('stock-opnames.duplicate');
     Route::patch('stock-opnames/{stockOpname}/items/{item}', [StockOpnameController::class, 'updateItem'])->middleware('permission:stock-opnames-create')->name('stock-opnames.items.update');
     Route::post('stock-opnames/{stockOpname}/finalize', [StockOpnameController::class, 'finalize'])->middleware('permission:stock-opnames-finalize')->name('stock-opnames.finalize');
+    Route::post('stock-opnames/{stockOpname}/send-report-email', [StockOpnameController::class, 'sendReportEmail'])->middleware('permission:stock-opnames-finalize')->name('stock-opnames.send-report-email');
     Route::get('stock-mutations', [StockMutationController::class, 'index'])->middleware('permission:stock-mutations-access')->name('stock-mutations.index');
+    // Transaksi Photobox (sinkron dari app booth) + kelola studio/token
+    Route::get('photobox-transactions', [PhotoboxTransactionController::class, 'index'])->middleware('permission:photobox-access')->name('photobox-transactions.index');
+    Route::post('photobox-studios', [PhotoboxTransactionController::class, 'storeStudio'])->middleware('permission:photobox-manage')->name('photobox-studios.store');
+    Route::post('photobox-studios/{studio}/token', [PhotoboxTransactionController::class, 'regenerateToken'])->middleware('permission:photobox-manage')->name('photobox-studios.token');
+    Route::post('photobox-studios/{studio}/toggle', [PhotoboxTransactionController::class, 'toggleStudio'])->middleware('permission:photobox-manage')->name('photobox-studios.toggle');
     Route::get('audit-logs', [AuditLogController::class, 'index'])->middleware('permission:audit-logs-access')->name('audit-logs.index');
     Route::get('audit-logs/{auditLog}', [AuditLogController::class, 'show'])->middleware('permission:audit-logs-access')->name('audit-logs.show');
     Route::get('cashier-shifts', [CashierShiftController::class, 'index'])->middleware('permission:cashier-shifts-access')->name('cashier-shifts.index');
     Route::post('cashier-shifts', [CashierShiftController::class, 'store'])->middleware('permission:cashier-shifts-open')->name('cashier-shifts.store');
     Route::get('cashier-shifts/{cashierShift}', [CashierShiftController::class, 'show'])->middleware('permission:cashier-shifts-access')->name('cashier-shifts.show');
     Route::post('cashier-shifts/{cashierShift}/close', [CashierShiftController::class, 'close'])->middleware('permission:cashier-shifts-close')->name('cashier-shifts.close');
+    Route::post('cashier-shifts/{cashierShift}/send-report-email', [CashierShiftController::class, 'sendReportEmail'])->middleware('permission:cashier-shifts-close')->name('cashier-shifts.send-report-email');
+    Route::post('cashier-shifts/{cashierShift}/expenses', [CashierShiftController::class, 'updateExpenses'])->middleware('permission:cashier-shifts-close')->name('cashier-shifts.expenses.update');
     Route::resource('customers', CustomerController::class)
         ->middlewareFor(['index', 'show'], 'permission:customers-access')
         ->middlewareFor(['create', 'store'], 'permission:customers-create')
         ->middlewareFor(['edit', 'update'], 'permission:customers-edit')
         ->middlewareFor('destroy', 'permission:customers-delete');
+    Route::post('members/registration-toggle', [MemberController::class, 'toggleRegistration'])
+        ->middleware('permission:members-toggle-registration')
+        ->name('members.registration-toggle');
     Route::resource('members', MemberController::class)
         ->parameters(['members' => 'member'])
         ->except(['destroy'])
@@ -254,6 +276,8 @@ Route::group(['prefix' => 'dashboard', 'middleware' => ['auth', 'verified']], fu
     Route::post('/settings/target', [\App\Http\Controllers\Apps\SettingController::class, 'updateTarget'])->middleware('permission:dashboard-access')->name('settings.target.update');
     Route::get('/settings/store', [\App\Http\Controllers\Apps\SettingController::class, 'storeProfile'])->middleware('permission:dashboard-access')->name('settings.store');
     Route::post('/settings/store', [\App\Http\Controllers\Apps\SettingController::class, 'updateStoreProfile'])->middleware('permission:dashboard-access')->name('settings.store.update');
+    Route::get('/settings/printer', [\App\Http\Controllers\Apps\SettingController::class, 'printer'])->middleware('permission:dashboard-access')->name('settings.printer');
+    Route::post('/settings/printer', [\App\Http\Controllers\Apps\SettingController::class, 'updatePrinter'])->middleware('permission:dashboard-access')->name('settings.printer.update');
     Route::get('/settings/loyalty', [\App\Http\Controllers\Apps\SettingController::class, 'loyalty'])->middleware('permission:dashboard-access')->name('settings.loyalty');
     Route::post('/settings/loyalty', [\App\Http\Controllers\Apps\SettingController::class, 'updateLoyalty'])->middleware('permission:dashboard-access')->name('settings.loyalty.update');
 
@@ -270,6 +294,12 @@ Route::group(['prefix' => 'dashboard', 'middleware' => ['auth', 'verified']], fu
     // confirm payment for bank transfer
     Route::patch('/transactions/{transaction}/confirm-payment', [TransactionController::class, 'confirmPayment'])->middleware(['permission:transactions-confirm-payment', 'step_up'])->name('transactions.confirm-payment');
     Route::patch('/transactions/{transaction}/update-status', [TransactionController::class, 'updateStatus'])->middleware(['permission:transactions-confirm-payment', 'step_up'])->name('transactions.update-status');
+    Route::get('/transactions/{transaction}/edit', [TransactionController::class, 'edit'])->middleware(['permission:transactions-edit', 'step_up'])->name('transactions.edit');
+    Route::post('/transactions/cancel-edit', [TransactionController::class, 'cancelEdit'])->middleware('permission:transactions-access')->name('transactions.cancel-edit');
+    Route::put('/transactions/{transaction}', [TransactionController::class, 'update'])->middleware(['permission:transactions-edit', 'step_up'])->name('transactions.update');
+    Route::delete('/transactions/{transaction}', [TransactionController::class, 'destroy'])->middleware(['permission:transactions-delete', 'step_up'])->name('transactions.destroy');
+    Route::get('/transactions/{transaction}/edit', [TransactionController::class, 'edit'])->middleware(['permission:transactions-edit', 'active_shift'])->name('transactions.edit');
+    Route::put('/transactions/{transaction}', [TransactionController::class, 'update'])->middleware(['permission:transactions-edit', 'active_shift'])->name('transactions.update');
 
     // reports
     Route::get('/reports/sales', [SalesReportController::class, 'index'])->middleware('permission:reports-access')->name('reports.sales.index');
@@ -278,6 +308,10 @@ Route::group(['prefix' => 'dashboard', 'middleware' => ['auth', 'verified']], fu
 
     // aging & reminders
     Route::get('/aging', [\App\Http\Controllers\Apps\AgingController::class, 'index'])->middleware('permission:receivables-access')->name('aging.index');
+
+    // print relay — HP kirim perintah, PC (tab listener) yang eksekusi via QZ Tray
+    Route::get('/print-listener', [\App\Http\Controllers\PrintRelayController::class, 'listener'])->middleware('permission:transactions-access')->name('print-relay.listener');
+    Route::post('/print-relay/{invoice}', [\App\Http\Controllers\PrintRelayController::class, 'request'])->middleware('permission:transactions-access')->name('print-relay.request');
 
     Route::get('/profile', [ProfileController::class, 'edit'])->name('profile.edit');
     Route::patch('/profile', [ProfileController::class, 'update'])->name('profile.update');

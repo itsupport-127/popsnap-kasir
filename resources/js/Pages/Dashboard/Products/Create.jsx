@@ -28,6 +28,7 @@ export default function Create({ categories }) {
         buy_price: "",
         sell_price: "",
         stock: "",
+        is_sellable: true,
     });
 
     const [selectedCategory, setSelectedCategory] = useState(null);
@@ -215,6 +216,31 @@ export default function Create({ categories }) {
                                     errors={errors.stock}
                                     placeholder="0"
                                 />
+                            </div>
+
+                            <div className="mt-4 flex items-start gap-3 rounded-xl border border-slate-200 dark:border-slate-700 p-4">
+                                <input
+                                    type="checkbox"
+                                    id="is_sellable"
+                                    checked={data.is_sellable}
+                                    onChange={(e) =>
+                                        setData("is_sellable", e.target.checked)
+                                    }
+                                    className="mt-0.5 h-4 w-4 rounded border-slate-300 text-primary-500 focus:ring-primary-500"
+                                />
+                                <label htmlFor="is_sellable" className="text-sm">
+                                    <span className="block font-medium text-slate-700 dark:text-slate-300">
+                                        Bisa Dijual di Kasir
+                                    </span>
+                                    <span className="block text-slate-500 dark:text-slate-400">
+                                        Matikan kalau ini cuma bahan/aksesoris
+                                        internal (mis. blank keychain, frame
+                                        cadangan) — stoknya tetap dilacak dan
+                                        bisa masuk Stock Opname, tapi
+                                        disembunyikan dari pencarian produk di
+                                        halaman kasir.
+                                    </span>
+                                </label>
                             </div>
 
                             {/* Profit Estimation */}

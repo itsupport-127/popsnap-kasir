@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Apps;
 use App\Http\Controllers\Controller;
 use App\Models\Customer;
 use App\Models\Promo;
+use App\Models\Setting;
 use App\Models\Transaction;
 use App\Services\CustomerSegmentationService;
 use App\Services\LoyaltyService;
@@ -90,6 +91,7 @@ class MemberController extends Controller
                 'status' => $status,
             ],
             'tierOptions' => $this->loyaltyService->tierOptions(),
+            'registrationEnabled' => Setting::getBool('member_registration_pos_enabled', true),
             'summary' => [
                 'total_members' => $totalMembers,
                 'active_members' => $activeMembers,
@@ -103,6 +105,26 @@ class MemberController extends Controller
                 ] : null,
             ],
         ]);
+    }
+
+    public function toggleRegistration(Request $request)
+    {
+        $validated = $request->validate([
+            'enabled' => 'required|boolean',
+        ]);
+
+        Setting::set(
+            'member_registration_pos_enabled',
+            $validated['enabled'] ? '1' : '0',
+            'Tampilkan Registrasi Member di form Tambah Pelanggan (kasir)'
+        );
+
+        return back()->with(
+            'success',
+            $validated['enabled']
+                ? 'Registrasi member di kasir diaktifkan.'
+                : 'Registrasi member di kasir dinonaktifkan.'
+        );
     }
 
     public function create()

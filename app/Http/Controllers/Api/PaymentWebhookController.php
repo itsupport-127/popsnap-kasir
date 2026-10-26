@@ -7,7 +7,9 @@ use App\Models\PaymentSetting;
 use App\Models\Transaction;
 use App\Services\Payments\DokuGateway;
 use App\Services\Payments\FlipGateway;
+use App\Services\StockMutationService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 
 class PaymentWebhookController extends Controller
@@ -15,6 +17,7 @@ class PaymentWebhookController extends Controller
     public function __construct(
         private DokuGateway $dokuGateway,
         private FlipGateway $flipGateway,
+        private StockMutationService $stockMutationService,
     ) {}
 
     // =========================================================================
@@ -52,10 +55,7 @@ class PaymentWebhookController extends Controller
                 $request->input('fraud_status')
             );
 
-            $transaction->update([
-                'payment_status'    => $newStatus,
-                'payment_reference' => $request->input('transaction_id') ?: $transaction->payment_reference,
-            ]);
+            $this->applyPaymentStatusUpdate($transaction, $newStatus, $request->input('transaction_id'));
 
             Log::info('Midtrans Webhook: Transaction updated', ['order_id' => $orderId, 'status' => $newStatus]);
             return response()->json(['status' => 'success']);
@@ -93,10 +93,7 @@ class PaymentWebhookController extends Controller
             }
 
             $newStatus = $this->mapXenditStatus($request->input('status'));
-            $transaction->update([
-                'payment_status'    => $newStatus,
-                'payment_reference' => $request->input('id') ?: $transaction->payment_reference,
-            ]);
+            $this->applyPaymentStatusUpdate($transaction, $newStatus, $request->input('id'));
 
             Log::info('Xendit Webhook: Transaction updated', ['external_id' => $externalId, 'status' => $newStatus]);
             return response()->json(['status' => 'success']);
@@ -137,10 +134,7 @@ class PaymentWebhookController extends Controller
             $acquirementStatus = $request->input('transaction.status', 'PENDING');
             $newStatus         = $this->dokuGateway->mapStatus($acquirementStatus);
 
-            $transaction->update([
-                'payment_status'    => $newStatus,
-                'payment_reference' => $request->input('transaction.original_request_id') ?: $transaction->payment_reference,
-            ]);
+            $this->applyPaymentStatusUpdate($transaction, $newStatus, $request->input('transaction.original_request_id'));
 
             Log::info('DOKU Webhook: Transaction updated', ['invoice' => $invoiceNumber, 'status' => $newStatus]);
             return response()->json(['status' => 'success']);
@@ -185,10 +179,7 @@ class PaymentWebhookController extends Controller
             }
 
             $newStatus = $this->flipGateway->mapStatus($data['status'] ?? 'PENDING');
-            $transaction->update([
-                'payment_status'    => $newStatus,
-                'payment_reference' => $data['id'] ?? $transaction->payment_reference,
-            ]);
+            $this->applyPaymentStatusUpdate($transaction, $newStatus, $data['id'] ?? null);
 
             Log::info('Flip Webhook: Transaction updated', ['invoice' => $invoiceNum, 'status' => $newStatus]);
             return response()->json(['status' => 'success']);
@@ -202,6 +193,39 @@ class PaymentWebhookController extends Controller
     // =========================================================================
     // HELPERS
     // =========================================================================
+
+    /**
+     * applyPaymentStatusUpdate — satu pintu buat semua webhook update status
+     * pembayaran. Kalau status baru 'failed' (gagal/expired) dan sebelumnya
+     * BUKAN 'failed'/'paid', stok yang udah kepotong pas checkout otomatis
+     * dikembalikan. Dibungkus DB::transaction biar atomic, dan pengecekan
+     * status sebelumnya mencegah stok balik dobel kalau webhook yang sama
+     * kekirim berkali-kali (retry dari payment gateway).
+     */
+    private function applyPaymentStatusUpdate(Transaction $transaction, string $newStatus, ?string $paymentReference): void
+    {
+        DB::transaction(function () use ($transaction, $newStatus, $paymentReference) {
+            $transaction = Transaction::where('id', $transaction->id)->lockForUpdate()->first();
+            $previousStatus = $transaction->payment_status;
+
+            $transaction->update([
+                'payment_status'    => $newStatus,
+                'payment_reference' => $paymentReference ?: $transaction->payment_reference,
+            ]);
+
+            if (
+                in_array($newStatus, ['failed', 'expired'], true)
+                && ! in_array($previousStatus, ['failed', 'expired', 'paid'], true)
+            ) {
+                $this->stockMutationService->restoreStockForTransaction($transaction);
+
+                Log::info('Stock restored for failed/expired payment', [
+                    'transaction_id' => $transaction->id,
+                    'invoice'         => $transaction->invoice,
+                ]);
+            }
+        });
+    }
 
     private function mapMidtransStatus(string $transactionStatus, ?string $fraudStatus = null): string
     {

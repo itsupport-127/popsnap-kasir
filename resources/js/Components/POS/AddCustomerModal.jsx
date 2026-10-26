@@ -17,6 +17,7 @@ export default function AddCustomerModal({
     onClose,
     onSuccess,
     tierOptions = [],
+    showMemberRegistration = true,
 }) {
     const defaultTier = tierOptions[0]?.value || "regular";
     const [form, setForm] = useState({
@@ -55,10 +56,13 @@ export default function AddCustomerModal({
         setIsSubmitting(true);
 
         try {
-            const response = await axios.post(
-                route("customers.storeAjax"),
-                form
-            );
+            const response = await axios.post(route("customers.storeAjax"), {
+                ...form,
+                // Kalau registrasi member dimatikan di menu Member, selalu non-member
+                is_loyalty_member: showMemberRegistration
+                    ? form.is_loyalty_member
+                    : false,
+            });
 
             if (response.data.success) {
                 toast.success("Pelanggan berhasil ditambahkan");
@@ -119,7 +123,9 @@ export default function AddCustomerModal({
                                 Tambah Pelanggan
                             </h3>
                             <p className="text-sm text-white/80">
-                                Daftarkan pelanggan baru atau aktifkan sebagai member
+                                {showMemberRegistration
+                                    ? "Daftarkan pelanggan baru atau aktifkan sebagai member"
+                                    : "Daftarkan pelanggan baru"}
                             </p>
                         </div>
                     </div>
@@ -208,6 +214,7 @@ export default function AddCustomerModal({
                         )}
                     </div>
 
+                    {showMemberRegistration && (
                     <div className="rounded-2xl border border-primary-100 bg-primary-50/70 p-4 dark:border-primary-900/40 dark:bg-primary-950/20">
                         <div className="flex items-center justify-between gap-4">
                             <div className="flex items-start gap-3">
@@ -267,6 +274,7 @@ export default function AddCustomerModal({
                             </div>
                         ) : null}
                     </div>
+                    )}
 
                     {/* Actions */}
                     <div className="flex gap-3 pt-2">

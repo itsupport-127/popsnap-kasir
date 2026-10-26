@@ -59,6 +59,7 @@ class PermissionSeeder extends Seeder
         $create('customers-create');
         $create('customers-edit');
         $create('customers-delete');
+        $create('members-toggle-registration');
         $create('customer-segments-access');
         $create('customer-segments-create');
         $create('customer-segments-update');
@@ -72,6 +73,8 @@ class PermissionSeeder extends Seeder
         // permission transactions
         $create('transactions-access');
         $create('transactions-confirm-payment');
+        $create('transactions-edit');
+        $create('transactions-delete');
 
         // permission receivables & payables
         $create('receivables-access');

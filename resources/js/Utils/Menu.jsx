@@ -16,6 +16,7 @@ import {
     IconFileDescription,
     IconFolder,
     IconGift,
+    IconPrinter,
     IconLayout2,
     IconBuildingStore,
     IconSchool,
@@ -31,6 +32,7 @@ import {
     IconCurrencyDollar,
     IconWallet,
     IconFileSearch,
+    IconCamera,
     IconTruckDelivery,
     IconTruckReturn,
     IconSpeakerphone,
@@ -108,6 +110,13 @@ export default function Menu() {
                             : false,
                     icon: <IconClockHour6 size={20} strokeWidth={1.5} />,
                     permissions: hasAnyPermission(["transactions-access"]),
+                },
+                {
+                    title: "Transaksi Photobox",
+                    href: route("photobox-transactions.index"),
+                    active: url.startsWith("/dashboard/photobox-transactions"),
+                    icon: <IconCamera size={20} strokeWidth={1.5} />,
+                    permissions: hasAnyPermission(["photobox-access"]),
                 },
                 {
                     title: "Retur Penjualan",
@@ -341,6 +350,13 @@ export default function Menu() {
                     active: url === "/dashboard/settings/bank-accounts",
                     icon: <IconCreditCard size={20} strokeWidth={1.5} />,
                     permissions: hasAnyPermission(["payment-settings-access"]),
+                },
+                {
+                    title: "Printer",
+                    href: route("settings.printer"),
+                    active: url === "/dashboard/settings/printer",
+                    icon: <IconPrinter size={20} strokeWidth={1.5} />,
+                    permissions: hasAnyPermission(["dashboard-access"]),
                 },
                 {
                     title: "Loyalty",

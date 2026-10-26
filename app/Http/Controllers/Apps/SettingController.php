@@ -133,6 +133,41 @@ class SettingController extends Controller
         return back()->with('success', 'Profil toko berhasil diperbarui');
     }
 
+    public const PRINT_VIEWS = ['invoice', 'thermal80', 'thermal58', 'shipping'];
+
+    /**
+     * Pengaturan printer / halaman print (dipakai Print.jsx & QZ Tray).
+     */
+    public static function printSettings(): array
+    {
+        $view = Setting::get('print_default_view', 'thermal58');
+
+        return [
+            'defaultView' => in_array($view, self::PRINT_VIEWS, true) ? $view : 'thermal58',
+            'printerName' => trim((string) Setting::get('print_printer_name', 'POS-58')) ?: 'POS-58',
+        ];
+    }
+
+    public function printer()
+    {
+        return Inertia::render('Dashboard/Settings/Printer', [
+            'settings' => self::printSettings(),
+        ]);
+    }
+
+    public function updatePrinter(Request $request)
+    {
+        $validated = $request->validate([
+            'default_view' => ['required', 'in:'.implode(',', self::PRINT_VIEWS)],
+            'printer_name' => ['required', 'string', 'max:100'],
+        ]);
+
+        Setting::set('print_default_view', $validated['default_view'], 'Tampilan default halaman print transaksi');
+        Setting::set('print_printer_name', trim($validated['printer_name']), 'Nama printer struk (QZ Tray)');
+
+        return back()->with('success', 'Pengaturan printer disimpan');
+    }
+
     public function loyalty()
     {
         return Inertia::render('Dashboard/Settings/Loyalty', [

@@ -1,4 +1,5 @@
 import DashboardLayout from "@/Layouts/DashboardLayout";
+import { useAuthorization } from "@/Utils/authorization";
 import { Head, Link, router } from "@inertiajs/react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import Chart from "chart.js/auto";
@@ -18,9 +19,9 @@ import {
     IconAlertTriangle,
     IconPackageOff,
     IconTarget,
-    IconMapPin,
     IconWallet,
     IconCalendar,
+    IconCamera,
 } from "@tabler/icons-react";
 
 const formatCurrency = (value = 0) =>
@@ -31,7 +32,10 @@ const formatCurrency = (value = 0) =>
     }).format(value);
 
 // Stat Card Component
-function StatCard({ title, value, subtitle, icon: Icon, gradient, trend }) {
+function StatCard({ title, value, subtitle, icon: Icon, gradient, growth }) {
+    const hasGrowth = growth !== null && growth !== undefined;
+    const trend = hasGrowth ? (growth >= 0 ? "up" : "down") : null;
+
     return (
         <div
             className={`
@@ -50,23 +54,38 @@ function StatCard({ title, value, subtitle, icon: Icon, gradient, trend }) {
             </div>
 
             <div className="relative z-10">
-                <div className="flex items-center gap-2 mb-3">
-                    <div className="p-2 rounded-xl bg-white/20">
-                        <Icon size={20} strokeWidth={1.5} />
+                <div className="flex items-center justify-between gap-2 mb-3">
+                    <div className="flex items-center gap-2">
+                        <div className="p-2 rounded-xl bg-white/20">
+                            <Icon size={20} strokeWidth={1.5} />
+                        </div>
+                        <span className="text-sm font-medium opacity-90">
+                            {title}
+                        </span>
                     </div>
-                    <span className="text-sm font-medium opacity-90">
-                        {title}
-                    </span>
+                    {hasGrowth && (
+                        <span
+                            className={`inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full text-xs font-semibold ${
+                                trend === "up"
+                                    ? "bg-white/25"
+                                    : "bg-black/15"
+                            }`}
+                            title="Dibanding periode sebelumnya"
+                        >
+                            {trend === "up" ? (
+                                <IconArrowUpRight size={12} />
+                            ) : (
+                                <IconArrowDownRight size={12} />
+                            )}
+                            {Math.abs(growth)}%
+                        </span>
+                    )}
                 </div>
 
                 <p className="text-3xl font-bold">{value}</p>
 
                 {subtitle && (
-                    <p className="mt-2 text-sm opacity-80 flex items-center gap-1">
-                        {trend === "up" && <IconArrowUpRight size={14} />}
-                        {trend === "down" && <IconArrowDownRight size={14} />}
-                        {subtitle}
-                    </p>
+                    <p className="mt-2 text-sm opacity-80">{subtitle}</p>
                 )}
             </div>
         </div>
@@ -200,22 +219,37 @@ export default function Dashboard({
     todayTransactions,
     todaySales = 0,
     todayProfit = 0,
+    salesGrowth = null,
+    profitGrowth = null,
+    transactionGrowth = null,
     monthlyTarget = 0,
     currentMonthSales = 0,
     topProducts = [],
+    topProductsByCategory = [],
     slowMovingProducts = [],
     recentTransactions = [],
     topCustomers = [],
-    topLocations = [],
     lowStockProducts = [],
     activeShifts = [],
+    photobox = null,
+    sources = [],
+    storeSales = 0,
+    storeTransactions = 0,
 }) {
     const chartRef = useRef(null);
     const chartInstance = useRef(null);
+    const [productView, setProductView] = useState("all");
+
+    const { can } = useAuthorization();
+    // "Laporan Profit" (profits-access) dipakai sebagai penanda role admin/pemilik.
+    // Kasir biasa (tanpa permission ini) tidak lihat filter periode & 3 card
+    // penjualan/profit/transaksi yang bisa diganti-ganti periodenya.
+    const canViewProfits = can("profits-access");
 
     const chartData = useMemo(() => revenueTrend ?? [], [revenueTrend]);
 
     const PERIODS = [
+        { value: "all",   label: "Semua" },
         { value: "today", label: "Hari Ini" },
         { value: "week",  label: "Minggu Ini" },
         { value: "month", label: "Bulan Ini" },
@@ -345,8 +379,8 @@ export default function Dashboard({
                                 Dashboard
                             </h1>
                             <p className="text-sm text-slate-500 dark:text-slate-400">
-                                Data: <span className="font-semibold text-primary-600 dark:text-primary-400">{periodLabel}</span>
-                                {period === "custom" && startDate && endDate && (
+                                Data: <span className="font-semibold text-primary-600 dark:text-primary-400">{canViewProfits ? periodLabel : "Hari Ini"}</span>
+                                {canViewProfits && period === "custom" && startDate && endDate && (
                                     <span className="ml-1 text-slate-400">({startDate} s/d {endDate})</span>
                                 )}
                             </p>
@@ -360,25 +394,27 @@ export default function Dashboard({
                         </Link>
                     </div>
 
-                    {/* Filter Periode */}
-                    <div className="flex flex-wrap gap-2">
-                        {PERIODS.map(p => (
-                            <button
-                                key={p.value}
-                                onClick={() => handlePeriod(p.value)}
-                                className={`px-4 py-2 rounded-xl text-sm font-medium transition-all ${
-                                    activePeriod === p.value
-                                        ? "bg-primary-500 text-white shadow-md shadow-primary-500/30"
-                                        : "bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:border-primary-300 dark:hover:border-primary-700"
-                                }`}
-                            >
-                                {p.label}
-                            </button>
-                        ))}
-                    </div>
+                    {/* Filter Periode — cuma buat yang punya akses Laporan Profit */}
+                    {canViewProfits && (
+                        <div className="flex flex-wrap gap-2">
+                            {PERIODS.map(p => (
+                                <button
+                                    key={p.value}
+                                    onClick={() => handlePeriod(p.value)}
+                                    className={`px-4 py-2 rounded-xl text-sm font-medium transition-all ${
+                                        activePeriod === p.value
+                                            ? "bg-primary-500 text-white shadow-md shadow-primary-500/30"
+                                            : "bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:border-primary-300 dark:hover:border-primary-700"
+                                    }`}
+                                >
+                                    {p.label}
+                                </button>
+                            ))}
+                        </div>
+                    )}
 
                     {/* Custom Date Range */}
-                    {showCustom && (
+                    {canViewProfits && showCustom && (
                         <div className="flex flex-wrap items-center gap-3 p-4 rounded-2xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
                             <IconCalendar size={16} className="text-slate-400" />
                             <div className="flex items-center gap-2">
@@ -401,46 +437,101 @@ export default function Dashboard({
                             </div>
                             <button
                                 onClick={() => applyFilter("custom", customStart, customEnd)}
-                                disabled={!customStart || !customEnd}
+                                disabled={!customStart || !customEnd || customStart > customEnd}
                                 className="px-4 py-2 rounded-lg bg-primary-500 hover:bg-primary-600 text-white text-sm font-medium disabled:opacity-50 transition-colors"
                             >
                                 Terapkan
                             </button>
+                            {customStart && customEnd && customStart > customEnd && (
+                                <p className="w-full text-xs text-danger-500">
+                                    Tanggal "Sampai" tidak boleh lebih awal dari "Dari".
+                                </p>
+                            )}
                         </div>
                     )}
                 </div>
 
                 {/* Main Stat Cards - Reorganized */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                    <StatCard
-                        title={`Penjualan ${periodLabel}`}
-                        value={formatCurrency(todaySales)}
-                        subtitle="Total penjualan hari ini"
-                        icon={IconCoin}
-                        gradient="from-primary-500 to-primary-700"
-                    />
-                    <StatCard
-                        title={`Profit ${periodLabel}`}
-                        value={formatCurrency(todayProfit)}
-                        subtitle="Profit bersih hari ini"
-                        icon={IconTrendingUp}
-                        gradient="from-success-500 to-success-700"
-                        trend="up"
-                    />
+                    {canViewProfits && (
+                        <>
+                            <StatCard
+                                title={`Penjualan ${periodLabel}`}
+                                value={formatCurrency(todaySales)}
+                                subtitle={photobox
+                                    ? `Toko ${formatCurrency(storeSales)} · Photobox ${formatCurrency(photobox.revenue)}`
+                                    : `Total penjualan ${periodLabel.toLowerCase()}`}
+                                icon={IconCoin}
+                                gradient="from-primary-500 to-primary-700"
+                                growth={salesGrowth}
+                            />
+                            <StatCard
+                                title={`Profit ${periodLabel}`}
+                                value={formatCurrency(todayProfit)}
+                                subtitle={photobox
+                                    ? "Profit toko (photobox belum punya data modal)"
+                                    : `Profit bersih ${periodLabel.toLowerCase()}`}
+                                icon={IconTrendingUp}
+                                gradient="from-success-500 to-success-700"
+                                growth={profitGrowth}
+                            />
+                        </>
+                    )}
                     <TargetCard
                         title="Target Bulan Ini"
                         current={currentMonthSales}
                         target={monthlyTarget}
                         icon={IconTarget}
                     />
-                    <StatCard
-                        title={`Transaksi ${periodLabel}`}
-                        value={todayTransactions}
-                        subtitle="Transaksi"
-                        icon={IconClock}
-                        gradient="from-warning-500 to-warning-600"
-                    />
+                    {canViewProfits && (
+                        <StatCard
+                            title={`Transaksi ${periodLabel}`}
+                            value={todayTransactions}
+                            subtitle={photobox
+                                ? `Toko ${storeTransactions} · Photobox ${photobox.transactions} (QRIS booth)`
+                                : "Transaksi"}
+                            icon={IconClock}
+                            gradient="from-warning-500 to-warning-600"
+                            growth={transactionGrowth}
+                        />
+                    )}
                 </div>
+
+                {/* Per sumber: kasir toko + tiap studio photobox. Detail transaksi ada di menu masing-masing. */}
+                {photobox && sources.length > 0 && (
+                    <ListCard
+                        title="Pendapatan per Sumber"
+                        subtitle={`${periodLabel} · toko + photobox sudah masuk ke angka di atas`}
+                        icon={IconCamera}
+                    >
+                        <ul className="divide-y divide-slate-100 dark:divide-slate-800">
+                            {sources.map((src) => {
+                                const href =
+                                    src.type === "store"
+                                        ? route("transactions.history")
+                                        : route("photobox-transactions.index", { period, studio_id: src.studio_id });
+                                return (
+                                    <li key={src.key} className="flex flex-wrap items-center justify-between gap-2 py-2.5 text-sm">
+                                        <span className="flex items-center gap-2 font-medium text-slate-800 dark:text-slate-100">
+                                            {src.type === "store" ? <IconShoppingCart size={16} /> : <IconCamera size={16} />}
+                                            {src.name}
+                                        </span>
+                                        <span className="flex items-center gap-4 text-slate-500 dark:text-slate-400">
+                                            <span>
+                                                {src.transactions} transaksi
+                                                {src.sessions !== null && src.sessions !== src.transactions ? ` · ${src.sessions} sesi` : ""}
+                                            </span>
+                                            <b className="min-w-[110px] text-right text-slate-800 dark:text-slate-100">{formatCurrency(src.revenue)}</b>
+                                            <Link href={href} className="text-xs font-semibold text-primary-600 hover:underline dark:text-primary-400">
+                                                Detail
+                                            </Link>
+                                        </span>
+                                    </li>
+                                );
+                            })}
+                        </ul>
+                    </ListCard>
+                )}
 
                 {/* Secondary Stats */}
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -480,8 +571,115 @@ export default function Dashboard({
                     )}
                 </ListCard>
 
-                {/* 4-Column Bottom Widgets */}
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+                {/* Top Products - Full Width with category breakdown */}
+                <ListCard
+                    title="Produk Terlaris"
+                    subtitle="Best seller"
+                    icon={IconBox}
+                    emptyMessage="Belum ada data"
+                >
+                    {topProducts.length > 0 && (
+                        <div>
+                            {/* Tabs */}
+                            <div className="flex items-center gap-1 mb-4 p-1 bg-slate-100 dark:bg-slate-800 rounded-xl w-fit">
+                                <button
+                                    onClick={() => setProductView("all")}
+                                    className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${
+                                        productView === "all"
+                                            ? "bg-white dark:bg-slate-900 text-primary-600 dark:text-primary-400 shadow-sm"
+                                            : "text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-300"
+                                    }`}
+                                >
+                                    Semua Produk
+                                </button>
+                                <button
+                                    onClick={() => setProductView("category")}
+                                    className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors ${
+                                        productView === "category"
+                                            ? "bg-white dark:bg-slate-900 text-primary-600 dark:text-primary-400 shadow-sm"
+                                            : "text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-300"
+                                    }`}
+                                >
+                                    Per Kategori
+                                </button>
+                            </div>
+
+                            {/* Semua Produk */}
+                            {productView === "all" && (
+                                <div className="max-h-96 overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800">
+                                    {topProducts.map((product, index) => (
+                                        <div
+                                            key={index}
+                                            className="flex items-center justify-between gap-3 py-3 first:pt-0 last:pb-0"
+                                        >
+                                            <div className="flex items-start gap-3">
+                                                <span className="w-7 h-7 shrink-0 rounded-full bg-primary-100 dark:bg-primary-900/50 text-primary-600 dark:text-primary-400 text-sm font-semibold flex items-center justify-center">
+                                                    {index + 1}
+                                                </span>
+                                                <div className="space-y-1">
+                                                    <p className="text-sm font-semibold text-slate-800 dark:text-slate-200 line-clamp-1">
+                                                        {product.name}
+                                                    </p>
+                                                    <p className="text-xs text-slate-500 dark:text-slate-400">
+                                                        {product.category} • SKU:{" "}
+                                                        {product.sku || "-"}
+                                                    </p>
+                                                </div>
+                                            </div>
+                                            <div className="text-right shrink-0">
+                                                <p className="text-base font-semibold text-primary-600 dark:text-primary-400 leading-tight">
+                                                    {product.qty}x
+                                                </p>
+                                                <p className="text-[11px] uppercase tracking-wide text-slate-500 dark:text-slate-400">
+                                                    Terjual
+                                                </p>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+
+                            {/* Per Kategori */}
+                            {productView === "category" && (
+                                <div className="max-h-96 overflow-y-auto space-y-4">
+                                    {topProductsByCategory.map((cat, catIndex) => (
+                                        <div
+                                            key={catIndex}
+                                            className="rounded-xl border border-slate-100 dark:border-slate-800 overflow-hidden"
+                                        >
+                                            <div className="flex items-center justify-between px-4 py-2.5 bg-slate-50 dark:bg-slate-800/60">
+                                                <p className="text-sm font-semibold text-slate-800 dark:text-slate-200">
+                                                    {catIndex + 1}. {cat.category}
+                                                </p>
+                                                <span className="text-xs font-semibold text-primary-600 dark:text-primary-400">
+                                                    {cat.total_qty}x terjual
+                                                </span>
+                                            </div>
+                                            <div className="divide-y divide-slate-100 dark:divide-slate-800 px-4">
+                                                {cat.products.map((product, index) => (
+                                                    <div
+                                                        key={index}
+                                                        className="flex items-center justify-between gap-3 py-2.5"
+                                                    >
+                                                        <p className="text-sm text-slate-700 dark:text-slate-300 line-clamp-1">
+                                                            {product.name}
+                                                        </p>
+                                                        <span className="text-xs font-semibold text-slate-500 dark:text-slate-400 shrink-0">
+                                                            {product.qty}x
+                                                        </span>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                    )}
+                </ListCard>
+
+                {/* 3-Column Bottom Widgets */}
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                     <ListCard
                         title="Shift Aktif"
                         subtitle="Pemantauan kasir"
@@ -507,47 +705,6 @@ export default function Dashboard({
                                             <span className="text-xs font-medium text-emerald-600 dark:text-emerald-400">
                                                 {formatCurrency(shift.expected_cash)}
                                             </span>
-                                        </div>
-                                    </div>
-                                ))}
-                            </div>
-                        )}
-                    </ListCard>
-
-                    {/* Top Products */}
-                    <ListCard
-                        title="Produk Terlaris"
-                        subtitle="Best seller"
-                        icon={IconBox}
-                        emptyMessage="Belum ada data"
-                    >
-                        {topProducts.length > 0 && (
-                            <div className="divide-y divide-slate-100 dark:divide-slate-800">
-                                {topProducts.slice(0, 3).map((product, index) => (
-                                    <div
-                                        key={index}
-                                        className="flex items-center justify-between gap-3 py-3 first:pt-0 last:pb-0"
-                                    >
-                                        <div className="flex items-start gap-3">
-                                            <span className="w-7 h-7 rounded-full bg-primary-100 dark:bg-primary-900/50 text-primary-600 dark:text-primary-400 text-sm font-semibold flex items-center justify-center">
-                                                {index + 1}
-                                            </span>
-                                            <div className="space-y-1">
-                                                <p className="text-sm font-semibold text-slate-800 dark:text-slate-200 line-clamp-1">
-                                                    {product.name}
-                                                </p>
-                                                <p className="text-xs text-slate-500 dark:text-slate-400">
-                                                    SKU: {product.sku || "-"}
-                                                </p>
-                                            </div>
-                                        </div>
-                                        <div className="text-right">
-                                            <p className="text-base font-semibold text-primary-600 dark:text-primary-400 leading-tight">
-                                                {product.qty}x
-                                            </p>
-                                            <p className="text-[11px] uppercase tracking-wide text-slate-500 dark:text-slate-400">
-                                                Terjual
-                                            </p>
                                         </div>
                                     </div>
                                 ))}
@@ -619,36 +776,6 @@ export default function Dashboard({
                         )}
                     </ListCard>
 
-                    {/* Top Locations */}
-                    <ListCard
-                        title="Lokasi Terbanyak"
-                        subtitle="Berdasar kelurahan transaksi"
-                        icon={IconMapPin}
-                        emptyMessage="Belum ada data"
-                    >
-                        {topLocations.length > 0 && (
-                            <ul className="divide-y divide-slate-100 dark:divide-slate-800">
-                                {topLocations.map((loc, index) => (
-                                    <li
-                                        key={index}
-                                        className="flex items-center justify-between py-3 first:pt-0 last:pb-0"
-                                    >
-                                        <div className="flex items-center gap-3">
-                                            <span className="w-7 h-7 rounded-full bg-primary-100 dark:bg-primary-900/50 text-primary-600 dark:text-primary-400 text-sm font-semibold flex items-center justify-center">
-                                                {index + 1}
-                                            </span>
-                                            <span className="text-sm text-slate-700 dark:text-slate-300 truncate max-w-[120px]">
-                                                {loc.name}
-                                            </span>
-                                        </div>
-                                        <span className="text-xs text-slate-500 font-semibold">
-                                            {loc.orders}x
-                                            </span>
-                                        </li>
-                                    ))}
-                            </ul>
-                        )}
-                    </ListCard>
                 </div>
 
                 {/* Recent Transactions */}

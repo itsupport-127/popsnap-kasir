@@ -19,16 +19,18 @@ import { useAuthorization } from "@/Utils/authorization";
 
 // Category Card for Grid View
 function CategoryCard({ category, canUpdate, canDelete }) {
+    const [imgError, setImgError] = useState(false);
     return (
         <div className="group bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 overflow-hidden hover:shadow-lg hover:border-slate-300 dark:hover:border-slate-700 transition-all duration-200">
             {/* Category Image */}
             <div className="relative aspect-[3/2] bg-slate-100 dark:bg-slate-800 overflow-hidden">
-                {category.image ? (
+                {category.image && !imgError ? (
                     <img
                         src={category.image}
                         alt={category.name}
                         className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                         loading="lazy"
+                        onError={() => setImgError(true)}
                     />
                 ) : (
                     <div className="w-full h-full flex items-center justify-center">
@@ -160,7 +162,7 @@ export default function Index({ categories }) {
             {categories.data.length > 0 ? (
                 viewMode === "grid" ? (
                     /* Grid View */
-                    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
+                    <div className="grid grid-cols-2 lg:grid-cols-4 xl:grid-cols-5 gap-3 sm:gap-4">
                         {categories.data.map((category) => (
                             <CategoryCard
                                 key={category.id}

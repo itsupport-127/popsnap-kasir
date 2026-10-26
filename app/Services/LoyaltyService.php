@@ -183,39 +183,83 @@ class LoyaltyService
         $manualDiscountRequested = max(0, (int) ($options['manual_discount'] ?? 0));
         $shippingCost = max(0, (int) ($options['shipping_cost'] ?? 0));
         $requestedRedeemPoints = max(0, (int) ($options['redeem_points'] ?? 0));
+        // Metode bayar yang lagi dipilih kasir (cash / qris_static / dst) —
+        // dipakai buat filter promo yang punya syarat "hanya cashless" atau
+        // "hanya cash".
+        $paymentMethod = $options['payment_method'] ?? null;
         // Dukung banyak voucher sekaligus ('vouchers' = array) sekaligus tetap
         // kompatibel dengan pemanggil lama yang masih kirim 'voucher' tunggal.
+        // PENTING: sengaja TIDAK di-unique() by promo id. Kode voucher yang
+        // sama boleh muncul berkali-kali di array ini kalau kasir applied-nya
+        // >1x (mis. customer menang kode PANJAT17 2x lewat undian) — setiap
+        // kemunculan mewakili 1 "kemenangan"/pemakaian yang harus dihitung
+        // sendiri-sendiri (lihat counter +/- di kasir). Dulu ada ->unique()
+        // di sini yang bikin kode yang dipakai 2x cuma kehitung 1x — itu bug-nya.
         $manualPromos = collect($options['vouchers'] ?? [])
             ->filter()
             ->when(
                 empty($options['vouchers']) && ($options['voucher'] ?? $options['promo'] ?? null),
                 fn (Collection $c) => $c->push($options['voucher'] ?? $options['promo'])
             )
-            ->unique(fn ($promo) => $promo->id)
             ->values();
         $cartItems = data_get($pricingPreview, 'items', []);
 
         $availablePoints = $customer?->is_loyalty_member ? (int) $customer->loyalty_points : 0;
 
-        // Validasi & hitung diskon tiap voucher secara berurutan — subtotal yang
-        // dipakai untuk voucher berikutnya adalah sisa setelah voucher sebelumnya,
-        // supaya voucher persentase tidak menghitung dari subtotal awal berulang.
+        // Validasi & hitung diskon tiap voucher secara berurutan.
+        // - $runningSubtotal tetap dipertahankan buat cek syarat "minimum_order".
+        // - $remainingByCartId dilacak PER BARIS KERANJANG, supaya voucher yang
+        //   nempel ke 1 produk/kategori tertentu (Panjat Promo) cuma motong
+        //   harga barang itu — dan kalau ada voucher ke-2 nempel di barang yang
+        //   sama, dia menghitung dari SISA barang itu (kali berturut-turut),
+        //   bukan dari harga awal barang lagi.
         $validatedPromos = collect();
         $voucherFreeItems = [];
         $runningSubtotal = $subtotalAfterPromo;
+        $remainingByCartId = collect($cartItems)->mapWithKeys(fn ($item) => [
+            (int) data_get($item, 'cart_id') => (int) data_get($item, 'line_total', data_get($item, 'price', 0)),
+        ])->all();
+        // cart_id => array nama voucher yang BENERAN nyumbang potongan ke
+        // baris itu. PENTING: array, bukan string tunggal — karena 1 barang
+        // bisa kena kontribusi dari LEBIH DARI 1 voucher sekaligus (paling
+        // sering kejadian di mode "Total Transaksi": 2 kode dipakai bareng,
+        // dua2nya menyebar proporsional ke semua barang eligible). Kalau
+        // cuma nyimpen 1 nama (overwrite), voucher yang diproses TERAKHIR
+        // bakal "menutupi" kontribusi voucher lain yang sama2 motong barang
+        // itu — struk jadi salah bilang cuma 1 kode yang berlaku padahal 2.
+        $voucherNameByCartId = [];
+        $voucherPromoIdByCartId = [];
 
         foreach ($manualPromos as $candidatePromo) {
-            $validated = $this->promoService->validateManualPromo($customer, $candidatePromo, $runningSubtotal, $at, $cartItems);
+            $validated = $this->promoService->validateManualPromo($customer, $candidatePromo, $runningSubtotal, $at, $cartItems, $paymentMethod);
 
             if (! $validated) {
                 continue;
             }
 
-            $result = $this->promoService->calculateManualPromoDiscount($validated, $runningSubtotal, $cartItems);
+            $beforeRemaining = $remainingByCartId;
+            $result = $this->promoService->calculateManualPromoDiscount($validated, $runningSubtotal, $cartItems, $remainingByCartId);
             $lineDiscount = min($runningSubtotal, max(0, (int) $result['discount']));
 
             if ($lineDiscount <= 0 && empty($result['free_items'])) {
                 continue;
+            }
+
+            // Catat nama voucher ini di baris keranjang yang beneran kepotong —
+            // dipakai TransactionController::store() buat nampilin nama promo
+            // per item di struk/riwayat (bukan cuma di ringkasan transaksi).
+            foreach ($remainingByCartId as $cartId => $remaining) {
+                if ($remaining < ($beforeRemaining[$cartId] ?? $remaining)) {
+                    $voucherNameByCartId[$cartId] = array_values(array_unique([
+                        ...($voucherNameByCartId[$cartId] ?? []),
+                        $validated->name,
+                    ]));
+                    // promo_id di transaction_details cuma muat 1 FK — kalau
+                    // lebih dari 1 voucher nyumbang, simpan yang PERTAMA kali
+                    // nempel (bukan yang terakhir) sebagai referensi utama,
+                    // biar konsisten nunjuk ke kode yang duluan berlaku.
+                    $voucherPromoIdByCartId[$cartId] ??= $validated->id;
+                }
             }
 
             $runningSubtotal = max(0, $runningSubtotal - $lineDiscount);
@@ -226,7 +270,55 @@ class LoyaltyService
         $voucherDiscount = (int) $validatedPromos->sum('discount');
         $validatedPromo = $validatedPromos->first()['promo'] ?? null;
 
-        $afterVoucher = max(0, $subtotalAfterPromo - $voucherDiscount);
+        // Breakdown potongan voucher per baris keranjang (cart_id => rupiah),
+        // dipakai TransactionController::store() buat nyimpen discount_total
+        // per item di transaction_details — biar struk & riwayat transparan
+        // barang mana kena voucher berapa.
+        $voucherDiscountByCartId = collect($cartItems)
+            ->mapWithKeys(function ($item) use ($remainingByCartId) {
+                $cartId = (int) data_get($item, 'cart_id');
+                $original = (int) data_get($item, 'line_total', data_get($item, 'price', 0));
+                $remaining = (int) ($remainingByCartId[$cartId] ?? $original);
+
+                return [$cartId => max(0, $original - $remaining)];
+            })
+            ->filter(fn (int $amount) => $amount > 0)
+            ->all();
+
+        // Diskon manual PER ITEM — kasir pilih 1 barang spesifik di keranjang
+        // dan kasih diskon Rp atau % khusus buat barang itu (beda dari
+        // "Diskon Manual" transaksi yang motong TOTAL keranjang di bawah).
+        // Basisnya SISA harga barang itu setelah promo otomatis & voucher
+        // (pakai $remainingByCartId yang sama, jadi tetap konsisten kalau
+        // barang itu juga kena voucher).
+        $itemManualDiscountByCartId = [];
+
+        foreach (($options['item_discounts'] ?? []) as $entry) {
+            $cartId = (int) data_get($entry, 'cart_id');
+            $mode = data_get($entry, 'mode') === 'percent' ? 'percent' : 'nominal';
+            $value = max(0, (float) data_get($entry, 'value', 0));
+
+            $remainingLineValue = (int) ($remainingByCartId[$cartId] ?? 0);
+            if ($remainingLineValue <= 0) {
+                continue;
+            }
+
+            $discount = $mode === 'percent'
+                ? (int) round($remainingLineValue * (min(100, $value) / 100))
+                : (int) round($value);
+            $discount = max(0, min($remainingLineValue, $discount));
+
+            if ($discount <= 0) {
+                continue;
+            }
+
+            $remainingByCartId[$cartId] = $remainingLineValue - $discount;
+            $itemManualDiscountByCartId[$cartId] = $discount;
+        }
+
+        $itemManualDiscountTotal = (int) array_sum($itemManualDiscountByCartId);
+
+        $afterVoucher = max(0, $subtotalAfterPromo - $voucherDiscount - $itemManualDiscountTotal);
         $redeemPointValue = (int) $settings['redeem_point_value'];
         $maxRedeemPoints = $settings['enable_redeem']
             ? (int) floor($afterVoucher / max(1, $redeemPointValue))
@@ -255,7 +347,12 @@ class LoyaltyService
                 'promo_discount_total' => (int) data_get($pricingPreview, 'summary.promo_discount_total', 0),
                 'subtotal_after_promo' => $subtotalAfterPromo,
                 'voucher_discount_total' => $voucherDiscount,
+                'voucher_discount_by_cart_id' => $voucherDiscountByCartId,
+                'voucher_name_by_cart_id' => $voucherNameByCartId,
+                'voucher_promo_id_by_cart_id' => $voucherPromoIdByCartId,
                 'voucher_free_items' => $voucherFreeItems,
+                'item_manual_discount_total' => $itemManualDiscountTotal,
+                'item_manual_discount_by_cart_id' => $itemManualDiscountByCartId,
                 'loyalty_discount_total' => $pointsDiscount,
                 'manual_discount_total' => $manualDiscountApplied,
                 'shipping_cost' => $shippingCost,
@@ -282,11 +379,15 @@ class LoyaltyService
                 ->values()
                 ->all(),
             'eligible_vouchers' => $this->promoService
-                ->eligibleManualPromos($customer, $subtotalAfterPromo, $at, $cartItems)
-                ->map(fn (Promo $eligiblePromo) => $this->promoService->serializeManualPromo(
-                    $eligiblePromo,
-                    $this->promoService->calculateManualPromoDiscount($eligiblePromo, $subtotalAfterPromo, $cartItems)['discount']
-                ))
+                ->eligibleManualPromos($customer, $runningSubtotal, $at, $cartItems, $paymentMethod)
+                ->map(function (Promo $eligiblePromo) use ($runningSubtotal, $cartItems, $remainingByCartId) {
+                    $previewRemaining = $remainingByCartId;
+
+                    return $this->promoService->serializeManualPromo(
+                        $eligiblePromo,
+                        $this->promoService->calculateManualPromoDiscount($eligiblePromo, $runningSubtotal, $cartItems, $previewRemaining)['discount']
+                    );
+                })
                 ->values()
                 ->all(),
             'settings' => $this->settingsPayload(),

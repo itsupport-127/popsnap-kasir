@@ -30,8 +30,15 @@ class RoleSeeder extends Seeder
         $this->createRoleWithPermissions('customer-segments-access', '%customer-segments%');
         $this->createRoleWithPermissions('crm-campaigns-access', '%crm-campaigns%');
         $this->createRoleWithPermissions('crm-reminders-access', '%crm-reminders%');
-        $this->createRoleWithPermissions('transactions-access', '%transactions%');
+        $this->createRoleWithPermissions('transactions-access', '%transactions%', except: ['transactions-delete', 'transactions-edit']);
         $this->createRoleWithPermissions('transactions-confirm-payment', 'transactions-confirm-payment');
+        // Role terpisah, sengaja TIDAK ikut wildcard 'transactions-access' di
+        // atas — edit & hapus transaksi harus di-assign eksplisit satu-satu,
+        // nggak otomatis nempel ke role yang cuma punya akses transaksi biasa.
+        $this->createRoleWithPermissions('transactions-edit', 'transactions-edit');
+        $this->createRoleWithPermissions('transactions-delete', 'transactions-delete');
+        // Role terpisah: izin on/off Registrasi Member di kasir, di-assign eksplisit.
+        $this->createRoleWithPermissions('members-toggle-registration', 'members-toggle-registration');
         $this->createRoleWithPermissions('receivables-access', '%receivables%');
         $this->createRoleWithPermissions('payables-access', '%payables%');
         $this->createRoleWithPermissions('suppliers-access', '%suppliers%');
@@ -100,9 +107,11 @@ class RoleSeeder extends Seeder
         $legacyRole->delete();
     }
 
-    private function createRoleWithPermissions($roleName, $permissionNamePattern)
+    private function createRoleWithPermissions($roleName, $permissionNamePattern, array $except = [])
     {
-        $permissions = Permission::where('name', 'like', $permissionNamePattern)->get();
+        $permissions = Permission::where('name', 'like', $permissionNamePattern)
+            ->when($except, fn ($query) => $query->whereNotIn('name', $except))
+            ->get();
         $role = Role::firstOrCreate(['name' => $roleName]);
         $role->syncPermissions($permissions);
     }

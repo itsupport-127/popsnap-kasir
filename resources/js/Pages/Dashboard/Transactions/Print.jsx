@@ -17,15 +17,26 @@ import ThermalReceipt, {
 } from "@/Components/Receipt/ThermalReceipt";
 import ShippingLabel from "@/Components/Receipt/ShippingLabel";
 import { useAuthorization } from "@/Utils/authorization";
+import {
+    isAndroid,
+    isMobileDevice,
+    printViaRawBt,
+    requestRemotePrint,
+} from "@/Utils/mobilePrint";
+import { printReceiptViaQz } from "@/Utils/qzPrint";
 import toast from "react-hot-toast";
 
-export default function Print({ transaction }) {
+export default function Print({ transaction, printSettings }) {
     const { storeProfile } = usePage().props;
     const { can } = useAuthorization();
-    const [printMode, setPrintMode] = useState("invoice"); // 'invoice' | 'thermal80' | 'thermal58'
+    const [printMode, setPrintMode] = useState(
+        printSettings?.defaultView || "thermal58",
+    ); // diatur di Pengaturan → Printer
     const [showConfirmModal, setShowConfirmModal] = useState(false);
     const [isConfirming, setIsConfirming] = useState(false);
     const [isQzPrinting, setIsQzPrinting] = useState(false);
+    const [isRemotePrinting, setIsRemotePrinting] = useState(false);
+    const [isRawBtPrinting, setIsRawBtPrinting] = useState(false);
     const canConfirmPayment = can("transactions-confirm-payment");
 
     const formatPrice = (price = 0) =>
@@ -45,12 +56,17 @@ export default function Print({ transaction }) {
         });
 
     const items = transaction?.details ?? [];
+    // Porsi PROMO OTOMATIS murni per baris = discount_total dikurangi bagian
+    // voucher & diskon manual per-item (2 kolom baru) — supaya nggak dobel
+    // hitung waktu direkonstruksi jadi baseSubtotal di bawah.
     const promoDiscountTotal = useMemo(
         () =>
-            items.reduce(
-                (sum, item) => sum + Number(item.discount_total || 0),
-                0,
-            ),
+            items.reduce((sum, item) => {
+                const total = Number(item.discount_total || 0);
+                const voucherPart = Number(item.voucher_discount || 0);
+                const itemManualPart = Number(item.item_manual_discount || 0);
+                return sum + Math.max(0, total - voucherPart - itemManualPart);
+            }, 0),
         [items],
     );
     const loyaltyDiscountTotal = Number(
@@ -59,13 +75,22 @@ export default function Print({ transaction }) {
     const voucherDiscountTotal = Number(
         transaction?.customer_voucher_discount || 0,
     );
+    const itemManualDiscountTotal = Number(
+        transaction?.item_manual_discount_total || 0,
+    );
+    // PENTING: masing2 komponen di atas sekarang saling eksklusif (nggak ada
+    // yang overlap), jadi aman dijumlahkan buat rekonstruksi subtotal sebelum
+    // diskon — sebelumnya voucherDiscountTotal ikut kehitung dobel karena
+    // udah "nempel" juga di dalam promoDiscountTotal (discount_total lama
+    // masih gabungan promo+voucher+manual item tanpa dipisah).
     const baseSubtotal =
         (transaction?.grand_total || 0) +
         (transaction?.discount || 0) -
         (transaction?.shipping_cost || 0) +
         promoDiscountTotal +
         loyaltyDiscountTotal +
-        voucherDiscountTotal;
+        voucherDiscountTotal +
+        itemManualDiscountTotal;
 
     const store = useMemo(
         () => ({
@@ -82,15 +107,18 @@ export default function Print({ transaction }) {
     const paymentLabels = {
         cash: "Tunai",
         bank_transfer: "Transfer Bank",
-        midtrans: "Midtrans",
-        xendit: "Xendit",
+        qris_static: "QRIS",
+        midtrans: "QRIS",
+        xendit: "QRIS",
+        doku: "QRIS",
+        flip: "QRIS",
         pay_later: "Piutang",
         dual_cash_qris: "Tunai + QRIS",
     };
     const paymentMethodKey = (
         transaction?.payment_method || "cash"
     ).toLowerCase();
-    const paymentMethodLabel = paymentLabels[paymentMethodKey] ?? "Tunai";
+    const paymentMethodLabel = paymentLabels[paymentMethodKey] ?? paymentMethodKey;
 
     const paymentStatuses = {
         paid: "Lunas",
@@ -154,99 +182,60 @@ export default function Print({ transaction }) {
         setTimeout(() => document.body.removeChild(iframe), 1000);
     };
 
-    // Nama printer persis seperti yang muncul di Windows
-    const QZ_PRINTER_NAME = "POS-58";
-
     const handleQzPrint = async () => {
-        if (!window.qz) {
-            toast.error("QZ Tray belum terdeteksi. Pastikan QZ Tray sudah jalan di komputer ini.");
-            return;
-        }
-
         setIsQzPrinting(true);
-
-        const withTimeout = (promise, label, ms = 10000) =>
-            Promise.race([
-                promise,
-                new Promise((_, reject) =>
-                    setTimeout(() => reject(new Error(`Timeout di tahap: ${label}`)), ms)
-                ),
-            ]);
-
         try {
-            const qz = window.qz;
-
-            // Ambil certificate dari backend (digital-certificate.txt)
-            qz.security.setCertificatePromise((resolve, reject) => {
-                fetch(route("qz.certificate"), { credentials: "same-origin" })
-                    .then((res) => res.text())
-                    .then((cert) => cert.trim() ? resolve(cert) : reject("Cert tidak ditemukan. Jalankan: php artisan qz:generate-cert"))
-                    .catch(reject);
-            });
-
-            // Sign setiap request dengan private key di server
-            qz.security.setSignatureAlgorithm("SHA512");
-            qz.security.setSignaturePromise((toSign) => (resolve, reject) => {
-                fetch(route("qz.sign"), {
-                    method: "POST",
-                    headers: {
-                        "Content-Type": "application/json",
-                        "X-CSRF-TOKEN": document.querySelector('meta[name="csrf-token"]')?.content ?? "",
-                    },
-                    body: JSON.stringify({ toSign }),
-                    credentials: "same-origin",
-                })
-                    .then((res) => res.text())
-                    .then((sig) => sig.trim() ? resolve(sig) : reject("Signature kosong"))
-                    .catch(reject);
-            });
-
-            if (!qz.websocket.isActive()) {
-                await withTimeout(qz.websocket.connect(), "connect websocket");
-            }
-
-            const printer = await withTimeout(
-                qz.printers.find(QZ_PRINTER_NAME),
-                "cari printer"
-            );
-
-            const config = qz.configs.create(printer);
-
             const size = printMode === "thermal58" ? "58" : "80";
-            const rawUrl = route("documents.transactions.receipt-raw", {
+            await printReceiptViaQz({
                 invoice: transaction.invoice,
                 size,
+                printerName: printSettings?.printerName,
             });
-
-            // Ambil teks ESC/POS lewat fetch BROWSER (bawa sesi login)
-            const rawResponse = await withTimeout(
-                fetch(rawUrl, { credentials: "same-origin" }),
-                "ambil teks struk"
-            );
-
-            if (!rawResponse.ok) {
-                throw new Error(
-                    `Gagal ambil teks struk (status ${rawResponse.status}). Pastikan kamu masih login.`
-                );
-            }
-
-            const rawText = await rawResponse.text();
-
-            const data = [
-                {
-                    type: "raw",
-                    format: "plain",
-                    data: rawText,
-                },
-            ];
-
-            await withTimeout(qz.print(config, data), "kirim ke printer", 15000);
             toast.success("Struk terkirim ke printer!");
         } catch (err) {
             console.error("[QZ] ERROR:", err);
             toast.error("Gagal mencetak: " + (err?.message || "periksa koneksi QZ Tray"));
         } finally {
             setIsQzPrinting(false);
+        }
+    };
+
+    // Jalur 1: HP minta PC (tab /print-listener) yang eksekusi print via QZ Tray.
+    const handleRemotePrint = async () => {
+        const size = printMode === "thermal58" ? "58" : "80";
+        setIsRemotePrinting(true);
+        try {
+            await requestRemotePrint(transaction.invoice, size);
+            toast.success("Perintah print dikirim ke PC kasir!");
+        } catch (err) {
+            console.error("[RemotePrint] ERROR:", err);
+            toast.error(
+                "Gagal kirim perintah print. Pastikan PC kasir sudah buka halaman /print-listener.",
+            );
+        } finally {
+            setIsRemotePrinting(false);
+        }
+    };
+
+    // Jalur 2: HP Android kirim langsung ke printer Bluetooth via RawBT.
+    const handleRawBtPrint = async () => {
+        const size = printMode === "thermal58" ? "58" : "80";
+        const rawUrl = route("documents.transactions.receipt-raw", {
+            invoice: transaction.invoice,
+            size,
+        });
+        setIsRawBtPrinting(true);
+        try {
+            await printViaRawBt(rawUrl);
+        } catch (err) {
+            console.error("[RawBT] ERROR:", err);
+            toast.error(
+                "Gagal kirim ke RawBT: " +
+                    (err?.message ||
+                        "Pastikan app RawBT sudah terinstall & printer sudah dipairing."),
+            );
+        } finally {
+            setIsRawBtPrinting(false);
         }
     };
 
@@ -422,6 +411,38 @@ export default function Print({ transaction }) {
                                             ? "Mencetak..."
                                             : "Print Langsung"}
                                     </button>
+
+                                    {/* Print dari HP — kirim sinyal ke PC kasir (tab /print-listener) */}
+                                    {isMobileDevice() && (
+                                        <button
+                                            onClick={handleRemotePrint}
+                                            disabled={isRemotePrinting}
+                                            className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-primary-600 hover:bg-primary-700 text-sm font-semibold text-white transition-colors w-full sm:w-auto disabled:opacity-60"
+                                        >
+                                            {isRemotePrinting ? (
+                                                <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                                            ) : (
+                                                <IconPrinter size={18} />
+                                            )}
+                                            {isRemotePrinting
+                                                ? "Mengirim..."
+                                                : "Print dari HP (ke PC)"}
+                                        </button>
+                                    )}
+
+                                    {/* Print via Bluetooth langsung — Android + app RawBT */}
+                                    {isAndroid() && (
+                                        <button
+                                            onClick={handleRawBtPrint}
+                                            disabled={isRawBtPrinting}
+                                            className="inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl border border-primary-300 dark:border-primary-700 text-sm font-medium text-primary-700 dark:text-primary-400 hover:bg-primary-50 dark:hover:bg-primary-900/20 transition-colors w-full sm:w-auto disabled:opacity-60"
+                                        >
+                                            <IconPrinter size={16} />
+                                            {isRawBtPrinting
+                                                ? "Mengirim..."
+                                                : "Print Bluetooth (RawBT)"}
+                                        </button>
+                                    )}
 
                                     {/* PDF — backup / kirim ke pelanggan */}
                                     <a

@@ -12,6 +12,7 @@ class StockOpnameItem extends Model
     protected $fillable = [
         'stock_opname_id',
         'product_id',
+        'opening_stock',
         'system_stock',
         'physical_stock',
         'difference',
@@ -22,6 +23,7 @@ class StockOpnameItem extends Model
         'id' => 'integer',
         'stock_opname_id' => 'integer',
         'product_id' => 'integer',
+        'opening_stock' => 'integer',
         'system_stock' => 'integer',
         'physical_stock' => 'integer',
         'difference' => 'integer',

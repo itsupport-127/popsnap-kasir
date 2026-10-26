@@ -224,6 +224,18 @@ export default function Show({
                                                         transaction.date
                                                     )}
                                                 </p>
+                                                {transaction.discount_total >
+                                                    0 && (
+                                                    <p className="text-xs text-emerald-600 dark:text-emerald-400">
+                                                        {transaction.voucher_name
+                                                            ? `${transaction.voucher_name} · `
+                                                            : ""}
+                                                        Diskon -
+                                                        {formatPrice(
+                                                            transaction.discount_total
+                                                        )}
+                                                    </p>
+                                                )}
                                             </div>
                                             <p className="text-sm font-bold text-primary-600 dark:text-primary-300">
                                                 {formatPrice(transaction.total)}

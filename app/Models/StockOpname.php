@@ -16,6 +16,9 @@ class StockOpname extends Model
         'created_by',
         'finalized_by',
         'finalized_at',
+        'report_email_sent_at',
+        'report_email_sent_to',
+        'report_email_sent_by',
     ];
 
     protected $casts = [
@@ -23,6 +26,8 @@ class StockOpname extends Model
         'created_by' => 'integer',
         'finalized_by' => 'integer',
         'finalized_at' => 'datetime',
+        'report_email_sent_at' => 'datetime',
+        'report_email_sent_by' => 'integer',
     ];
 
     public function items()
@@ -38,6 +43,11 @@ class StockOpname extends Model
     public function finalizer()
     {
         return $this->belongsTo(User::class, 'finalized_by');
+    }
+
+    public function reportEmailSentBy()
+    {
+        return $this->belongsTo(User::class, 'report_email_sent_by');
     }
 
     public function isDraft(): bool

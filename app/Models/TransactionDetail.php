@@ -22,6 +22,8 @@ class TransactionDetail extends Model
         'unit_price',
         'price',
         'discount_total',
+        'voucher_discount',
+        'item_manual_discount',
         'promo_id',
         'pricing_rule_name',
         'pricing_rule_kind',
@@ -35,6 +37,8 @@ class TransactionDetail extends Model
         'unit_price' => 'integer',
         'price' => 'integer',
         'discount_total' => 'integer',
+        'voucher_discount' => 'integer',
+        'item_manual_discount' => 'integer',
         'promo_id' => 'integer',
         'pricing_rule_kind' => 'string',
     ];

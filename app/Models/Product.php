@@ -17,6 +17,7 @@ class Product extends Model
         'buy_price' => 'integer',
         'sell_price' => 'integer',
         'stock' => 'integer',
+        'is_sellable' => 'boolean',
     ];
 
     /**
@@ -34,6 +35,7 @@ class Product extends Model
         'sell_price',
         'category_id',
         'stock',
+        'is_sellable',
     ];
 
     /**

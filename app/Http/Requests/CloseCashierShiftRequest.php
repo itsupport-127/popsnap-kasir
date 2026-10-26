@@ -16,6 +16,8 @@ class CloseCashierShiftRequest extends FormRequest
         return [
             'actual_cash' => ['required', 'integer', 'min:0'],
             'close_notes' => ['nullable', 'string', 'max:1000'],
+            'expense_total' => ['nullable', 'integer', 'min:0'],
+            'expense_notes' => ['nullable', 'string', 'max:1000'],
         ];
     }
 }

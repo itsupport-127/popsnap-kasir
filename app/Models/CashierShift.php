@@ -33,6 +33,11 @@ class CashierShift extends Model
         'cash_difference',
         'notes',
         'close_notes',
+        'expense_total',
+        'expense_notes',
+        'report_email_sent_at',
+        'report_email_sent_to',
+        'report_email_sent_by',
         'status',
     ];
 
@@ -53,6 +58,9 @@ class CashierShift extends Model
         'transactions_count' => 'integer',
         'sales_returns_count' => 'integer',
         'cash_difference' => 'integer',
+        'expense_total' => 'integer',
+        'report_email_sent_at' => 'datetime',
+        'report_email_sent_by' => 'integer',
     ];
 
     public function user()
@@ -68,6 +76,11 @@ class CashierShift extends Model
     public function closedBy()
     {
         return $this->belongsTo(User::class, 'closed_by');
+    }
+
+    public function reportEmailSentBy()
+    {
+        return $this->belongsTo(User::class, 'report_email_sent_by');
     }
 
     public function transactions()
@@ -88,5 +101,10 @@ class CashierShift extends Model
     public function isOpen(): bool
     {
         return $this->status === self::STATUS_OPEN;
+    }
+
+    public function hasReportEmailBeenSent(): bool
+    {
+        return $this->report_email_sent_at !== null;
     }
 }

@@ -21,6 +21,7 @@ export default function CustomerSelect({
     label,
     onCustomerAdded,
     tierOptions = [],
+    memberRegistrationEnabled = true,
 }) {
     const [isOpen, setIsOpen] = useState(false);
     const [search, setSearch] = useState("");
@@ -347,6 +348,7 @@ export default function CustomerSelect({
                     onClose={() => setShowAddModal(false)}
                     onSuccess={handleAddCustomerSuccess}
                     tierOptions={tierOptions}
+                    showMemberRegistration={memberRegistrationEnabled}
                 />
             </>
         );

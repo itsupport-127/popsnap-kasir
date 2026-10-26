@@ -1,5 +1,7 @@
 import React, { useMemo, useState } from "react";
 import { Head, Link, router, usePage } from "@inertiajs/react";
+import Swal from "sweetalert2";
+import toast from "react-hot-toast";
 import DashboardLayout from "@/Layouts/DashboardLayout";
 import Table from "@/Components/Dashboard/Table";
 import Pagination from "@/Components/Dashboard/Pagination";
@@ -9,6 +11,7 @@ import {
     IconClockHour4,
     IconEye,
     IconHistory,
+    IconMailForward,
     IconUser,
 } from "@tabler/icons-react";
 
@@ -33,12 +36,42 @@ export default function Index({
     filters,
     cashiers = [],
     activeShift = null,
+    canSendReportEmail = false,
 }) {
     const { auth, errors } = usePage().props;
     const { can } = useAuthorization();
     const [openingCash, setOpeningCash] = useState("");
     const [notes, setNotes] = useState("");
+    const [sendingEmailId, setSendingEmailId] = useState(null);
     const canOpenShift = can("cashier-shifts-open");
+
+    const handleSendReportEmail = (shift) => {
+        Swal.fire({
+            title: "Kirim email tutup kasir?",
+            text: `Shift #${shift.id} — ${shift.user?.name || "-"}`,
+            icon: "question",
+            showCancelButton: true,
+            confirmButtonColor: "#0ea5e9",
+            cancelButtonColor: "#64748b",
+            confirmButtonText: shift.report_email_sent_at ? "Ya, Kirim Ulang" : "Ya, Kirim",
+            cancelButtonText: "Batal",
+        }).then((result) => {
+            if (!result.isConfirmed) return;
+
+            setSendingEmailId(shift.id);
+            router.post(
+                route("cashier-shifts.send-report-email", shift.id),
+                {},
+                {
+                    preserveScroll: true,
+                    preserveState: true,
+                    onSuccess: () => toast.success("Email laporan tutup kasir berhasil dikirim."),
+                    onError: () => toast.error("Gagal mengirim email laporan tutup kasir."),
+                    onFinish: () => setSendingEmailId(null),
+                }
+            );
+        });
+    };
 
     const currentFilters = useMemo(
         () => ({
@@ -246,6 +279,7 @@ export default function Index({
                                 <Table.Th>Tutup</Table.Th>
                                 <Table.Th>Ekspektasi Kas</Table.Th>
                                 <Table.Th>Selisih</Table.Th>
+                                <Table.Th>Email</Table.Th>
                                 <Table.Th className="w-24 text-center">Aksi</Table.Th>
                             </tr>
                         </Table.Thead>
@@ -288,19 +322,45 @@ export default function Index({
                                                 ? "-"
                                                 : formatCurrency(shift.cash_difference)}
                                         </Table.Td>
+                                        <Table.Td>
+                                            {shift.status === "open" ? (
+                                                <span className="text-xs text-slate-400">-</span>
+                                            ) : shift.report_email_sent_at ? (
+                                                <span className="inline-flex rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-semibold text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400">
+                                                    Terkirim
+                                                </span>
+                                            ) : (
+                                                <span className="inline-flex rounded-full bg-amber-100 px-2.5 py-1 text-xs font-semibold text-amber-700 dark:bg-amber-950/40 dark:text-amber-400">
+                                                    Belum Dikirim
+                                                </span>
+                                            )}
+                                        </Table.Td>
                                         <Table.Td className="text-center">
-                                            <Link
-                                                href={route("cashier-shifts.show", shift.id)}
-                                                className="inline-flex rounded-xl border border-slate-200 bg-slate-50 p-2 text-slate-600 transition hover:border-primary-300 hover:text-primary-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:border-primary-700 dark:hover:text-primary-400"
-                                            >
-                                                <IconEye size={18} />
-                                            </Link>
+                                            <div className="flex items-center justify-center gap-2">
+                                                {shift.status !== "open" && canSendReportEmail && (
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => handleSendReportEmail(shift)}
+                                                        disabled={sendingEmailId === shift.id}
+                                                        title={shift.report_email_sent_at ? "Kirim ulang email" : "Kirim email laporan"}
+                                                        className="inline-flex rounded-xl border border-slate-200 bg-slate-50 p-2 text-slate-600 transition hover:border-primary-300 hover:text-primary-600 disabled:cursor-not-allowed disabled:opacity-60 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:border-primary-700 dark:hover:text-primary-400"
+                                                    >
+                                                        <IconMailForward size={18} />
+                                                    </button>
+                                                )}
+                                                <Link
+                                                    href={route("cashier-shifts.show", shift.id)}
+                                                    className="inline-flex rounded-xl border border-slate-200 bg-slate-50 p-2 text-slate-600 transition hover:border-primary-300 hover:text-primary-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:border-primary-700 dark:hover:text-primary-400"
+                                                >
+                                                    <IconEye size={18} />
+                                                </Link>
+                                            </div>
                                         </Table.Td>
                                     </tr>
                                 ))
                             ) : (
                                 <Table.Empty
-                                    colSpan={7}
+                                    colSpan={8}
                                     message={
                                         <div className="text-slate-500 dark:text-slate-400">
                                             Belum ada histori shift kasir.

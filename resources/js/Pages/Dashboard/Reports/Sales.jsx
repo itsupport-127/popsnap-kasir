@@ -5,6 +5,7 @@ import InputSelect from "@/Components/Dashboard/InputSelect";
 import Button from "@/Components/Dashboard/Button";
 import Table from "@/Components/Dashboard/Table";
 import Pagination from "@/Components/Dashboard/Pagination";
+import TransactionItemsModal from "@/Components/Dashboard/TransactionItemsModal";
 import {
     IconCoin,
     IconDatabaseOff,
@@ -63,6 +64,10 @@ const castFilterString = (value) =>
 
 const Sales = ({ transactions, summary, filters, cashiers, customers }) => {
     const [showFilters, setShowFilters] = useState(false);
+    const [itemModal, setItemModal] = useState({
+        open: false,
+        transaction: null,
+    });
     const [filterData, setFilterData] = useState({
         ...defaultFilterState,
         start_date: castFilterString(filters?.start_date),
@@ -233,13 +238,6 @@ const Sales = ({ transactions, summary, filters, cashiers, customers }) => {
                     </button>
                 </div>
 
-                {/* Summary Cards */}
-                <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-                    {summaryCards.map((card) => (
-                        <SummaryCard key={card.title} {...card} />
-                    ))}
-                </div>
-
                 {/* Filters Panel */}
                 {showFilters && (
                     <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-5 animate-slide-up">
@@ -333,6 +331,14 @@ const Sales = ({ transactions, summary, filters, cashiers, customers }) => {
                     </div>
                 )}
 
+                {/* Summary Cards */}
+                <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+                    {summaryCards.map((card) => (
+                        <SummaryCard key={card.title} {...card} />
+                    ))}
+                </div>
+
+
                 {/* Table */}
                 {rows.length > 0 ? (
                     <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 overflow-hidden">
@@ -390,9 +396,19 @@ const Sales = ({ transactions, summary, filters, cashiers, customers }) => {
                                                 {trx.cashier?.name ?? "-"}
                                             </td>
                                             <td className="px-4 py-4 text-center">
-                                                <span className="px-2 py-0.5 text-xs font-medium bg-primary-100 dark:bg-primary-900/50 text-primary-700 dark:text-primary-400 rounded-full">
+                                                <button
+                                                    type="button"
+                                                    onClick={() =>
+                                                        setItemModal({
+                                                            open: true,
+                                                            transaction: trx,
+                                                        })
+                                                    }
+                                                    className="px-2 py-0.5 text-xs font-medium bg-primary-100 dark:bg-primary-900/50 text-primary-700 dark:text-primary-400 rounded-full hover:bg-primary-200 dark:hover:bg-primary-900 transition-colors cursor-pointer"
+                                                    title="Lihat detail item"
+                                                >
                                                     {trx.total_items ?? 0}
-                                                </span>
+                                                </button>
                                             </td>
                                             <td className="px-4 py-4 text-right text-sm font-semibold text-slate-900 dark:text-white">
                                                 {formatCurrency(
@@ -431,6 +447,14 @@ const Sales = ({ transactions, summary, filters, cashiers, customers }) => {
                     <Pagination links={paginationLinks} />
                 )}
             </div>
+
+            <TransactionItemsModal
+                open={itemModal.open}
+                transaction={itemModal.transaction}
+                onClose={() =>
+                    setItemModal({ open: false, transaction: null })
+                }
+            />
         </>
     );
 };

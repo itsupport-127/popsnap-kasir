@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Apps;
 use App\Http\Controllers\Controller;
 use App\Models\Customer;
 use App\Models\Promo;
+use App\Models\Setting;
 use App\Models\Transaction;
 use App\Services\CustomerSegmentationService;
 use App\Services\LoyaltyService;
@@ -132,6 +133,11 @@ class CustomerController extends Controller
             'district_id'      => 'nullable|string',
             'village_id'       => 'nullable|string',
         ]);
+
+        // Registrasi member dari kasir bisa dimatikan lewat menu Member.
+        if (! Setting::getBool('member_registration_pos_enabled', true)) {
+            $request->merge(['is_loyalty_member' => false]);
+        }
 
         try {
             $provinceCode = $validated['province_id'] ?? null;

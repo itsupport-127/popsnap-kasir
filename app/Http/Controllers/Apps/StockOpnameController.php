@@ -7,6 +7,8 @@ use App\Http\Requests\StoreStockOpnameItemRequest;
 use App\Http\Requests\StoreStockOpnameRequest;
 use App\Http\Requests\UpdateStockOpnameItemRequest;
 use App\Http\Requests\UpdateStockOpnameRequest;
+use App\Mail\StockOpnameReportMail;
+use App\Models\Category;
 use App\Models\Product;
 use App\Models\StockOpname;
 use App\Models\StockOpnameItem;
@@ -15,6 +17,7 @@ use App\Services\StockMutationService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 use Inertia\Inertia;
@@ -76,39 +79,83 @@ class StockOpnameController extends Controller
         return to_route('stock-opnames.show', $stockOpname);
     }
 
+    /**
+     * duplicate — bikin sesi Stock Opname baru (draft), langsung diisi
+     * produk yang sama kayak sesi lama. Buat laporan mingguan yang
+     * isinya rutin sama (kayak Popsnap: Frame, Gantungan, dst tiap
+     * minggu) — biar nggak perlu search+tambah satu-satu lagi tiap
+     * bikin sesi baru. Stock Awal & Stock Akhir dihitung ulang segar
+     * (bukan disalin) lewat addProductToOpname(), Stock di Toko & Catatan
+     * sengaja dikosongkan karena itu memang perlu dihitung ulang tiap
+     * periode.
+     */
+    public function duplicate(Request $request, StockOpname $stockOpname): RedirectResponse
+    {
+        $sourceProductIds = $stockOpname->items()->pluck('product_id');
+
+        if ($sourceProductIds->isEmpty()) {
+            return back()->with('error', 'Sesi ini nggak punya produk buat diduplikat.');
+        }
+
+        $newStockOpname = StockOpname::create([
+            'code' => $this->generateCode(),
+            'notes' => "Duplikat dari {$stockOpname->code}",
+            'status' => 'draft',
+            'created_by' => $request->user()?->id,
+        ]);
+
+        $products = Product::whereIn('id', $sourceProductIds)->get();
+
+        foreach ($products as $product) {
+            $this->addProductToOpname($newStockOpname, $product);
+        }
+
+        return to_route('stock-opnames.show', $newStockOpname)
+            ->with('success', "Sesi baru dibuat dengan {$products->count()} produk dari {$stockOpname->code}.");
+    }
+
     public function show(Request $request, StockOpname $stockOpname): Response
     {
         $stockOpname->load([
             'creator:id,name',
             'finalizer:id,name',
+            'reportEmailSentBy:id,name',
             'items.product.category:id,name',
         ]);
 
         $productFilters = [
             'search' => $request->input('product_search', ''),
+            'category_id' => $request->input('product_category_id', ''),
         ];
 
         $selectedProductIds = $stockOpname->items->pluck('product_id');
 
-        $availableProducts = blank($productFilters['search'])
+        $availableProducts = (blank($productFilters['search']) && blank($productFilters['category_id']))
             ? collect()
             : Product::query()
                 ->with('category:id,name')
-                ->where(function ($builder) use ($productFilters) {
-                    $builder
-                        ->where('title', 'like', '%'.$productFilters['search'].'%')
-                        ->orWhere('barcode', 'like', '%'.$productFilters['search'].'%')
-                        ->orWhere('sku', 'like', '%'.$productFilters['search'].'%');
+                ->when($productFilters['search'], function ($builder) use ($productFilters) {
+                    $builder->where(function ($inner) use ($productFilters) {
+                        $inner
+                            ->where('title', 'like', '%'.$productFilters['search'].'%')
+                            ->orWhere('barcode', 'like', '%'.$productFilters['search'].'%')
+                            ->orWhere('sku', 'like', '%'.$productFilters['search'].'%');
+                    });
+                })
+                ->when($productFilters['category_id'], function ($builder) use ($productFilters) {
+                    $builder->where('category_id', $productFilters['category_id']);
                 })
                 ->whereNotIn('id', $selectedProductIds)
                 ->orderBy('title')
-                ->limit(20)
+                ->limit($productFilters['category_id'] ? 200 : 20)
                 ->get();
 
         return Inertia::render('Dashboard/StockOpnames/Show', [
             'stockOpname' => $stockOpname,
             'availableProducts' => $availableProducts,
             'productFilters' => $productFilters,
+            'categories' => Category::select('id', 'name')->orderBy('name')->get(),
+            'reportRecipients' => config('stock_opname_report.recipients', []),
         ]);
     }
 
@@ -133,12 +180,67 @@ class StockOpnameController extends Controller
             ]);
         }
 
-        $stockOpname->items()->create([
-            'product_id' => $product->id,
-            'system_stock' => $product->stock,
-        ]);
+        $this->addProductToOpname($stockOpname, $product);
 
         return back()->with('success', 'Produk berhasil ditambahkan ke stock opname.');
+    }
+
+    /**
+     * storeItemsBulk — tambah banyak produk sekaligus, baik dari daftar
+     * product_id yang dipilih manual, atau semua produk dalam 1 kategori
+     * (tombol "Tambah Semua di Kategori Ini").
+     */
+    public function storeItemsBulk(Request $request, StockOpname $stockOpname): RedirectResponse
+    {
+        $this->ensureDraft($stockOpname);
+
+        $validated = $request->validate([
+            'product_ids' => ['nullable', 'array'],
+            'product_ids.*' => ['integer', 'exists:products,id'],
+            'category_id' => ['nullable', 'integer', 'exists:categories,id'],
+        ]);
+
+        $alreadyIn = $stockOpname->items()->pluck('product_id');
+
+        if (! empty($validated['category_id'])) {
+            $products = Product::where('category_id', $validated['category_id'])
+                ->whereNotIn('id', $alreadyIn)
+                ->get();
+        } else {
+            $productIds = array_diff($validated['product_ids'] ?? [], $alreadyIn->all());
+            $products = Product::whereIn('id', $productIds)->get();
+        }
+
+        if ($products->isEmpty()) {
+            return back()->with('error', 'Nggak ada produk baru buat ditambahkan (mungkin semuanya udah ada di sesi ini).');
+        }
+
+        foreach ($products as $product) {
+            $this->addProductToOpname($stockOpname, $product);
+        }
+
+        return back()->with('success', "{$products->count()} produk berhasil ditambahkan ke stock opname.");
+    }
+
+    private function addProductToOpname(StockOpname $stockOpname, Product $product): StockOpnameItem
+    {
+        // "Stock Awal" otomatis diambil dari "Stock Akhir" (system_stock)
+        // sesi Stock Opname SEBELUMNYA buat produk yang sama — biar tiap
+        // periode nyambung otomatis tanpa perlu diketik manual. Kalau
+        // produk ini belum pernah masuk Stock Opname, dibiarkan NULL.
+        $previousItem = StockOpnameItem::query()
+            ->join('stock_opnames', 'stock_opnames.id', '=', 'stock_opname_items.stock_opname_id')
+            ->where('stock_opname_items.product_id', $product->id)
+            ->where('stock_opname_items.stock_opname_id', '!=', $stockOpname->id)
+            ->orderByDesc('stock_opnames.created_at')
+            ->select('stock_opname_items.*')
+            ->first();
+
+        return $stockOpname->items()->create([
+            'product_id' => $product->id,
+            'opening_stock' => $previousItem?->system_stock,
+            'system_stock' => $product->stock,
+        ]);
     }
 
     public function updateItem(
@@ -253,6 +355,42 @@ class StockOpnameController extends Controller
         );
 
         return back()->with('success', 'Stock opname berhasil difinalisasi.');
+    }
+
+    public function sendReportEmail(Request $request, StockOpname $stockOpname): RedirectResponse
+    {
+        if ($stockOpname->isDraft()) {
+            return back()->with('error', 'Stock opname harus difinalisasi dulu sebelum kirim laporan email.');
+        }
+
+        $recipients = config('stock_opname_report.recipients', []);
+
+        if (empty($recipients)) {
+            return back()->with('error', 'Belum ada penerima email laporan stock opname yang dikonfigurasi.');
+        }
+
+        $stockOpname->load(['items.product.category', 'creator:id,name', 'finalizer:id,name']);
+
+        Mail::to($recipients)->send(new StockOpnameReportMail($stockOpname));
+
+        $stockOpname->update([
+            'report_email_sent_at' => now(),
+            'report_email_sent_to' => implode(', ', $recipients),
+            'report_email_sent_by' => $request->user()?->id,
+        ]);
+
+        $this->auditLogService->log(
+            event: 'stock.opname.report_email_sent',
+            module: 'stock',
+            auditable: $stockOpname,
+            description: 'Laporan stock opname dikirim via email.',
+            meta: [
+                'sent_to' => $stockOpname->report_email_sent_to,
+                'sent_by' => $stockOpname->report_email_sent_by,
+            ],
+        );
+
+        return back()->with('success', 'Email laporan stock opname berhasil dikirim.');
     }
 
     private function ensureDraft(StockOpname $stockOpname): void

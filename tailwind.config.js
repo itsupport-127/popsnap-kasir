@@ -25,19 +25,19 @@ export default {
                 ],
             },
             colors: {
-                // Primary - Indigo
+                // Primary - Sudah diganti dari Indigo/Ungu ke Biru #3272A9 sesuai request
                 primary: {
-                    50: "#eef2ff",
-                    100: "#e0e7ff",
-                    200: "#c7d2fe",
-                    300: "#a5b4fc",
-                    400: "#818cf8",
-                    500: "#6366f1",
-                    600: "#4f46e5",
-                    700: "#4338ca",
-                    800: "#3730a3",
-                    900: "#312e81",
-                    950: "#1e1b4b",
+                    50: "#F0F6FA",
+                    100: "#DBE9F4",
+                    200: "#B7D1E7",
+                    300: "#86B0D3",
+                    400: "#538DDE",
+                    500: "#3272A9", // Warna utama biru
+                    600: "#275987",
+                    700: "#20486D",
+                    800: "#1C3D5C",
+                    900: "#1A354F",
+                    950: "#102233",
                 },
                 // Accent - Cyan
                 accent: {
@@ -115,8 +115,9 @@ export default {
                 "4xl": "2rem",
             },
             boxShadow: {
-                glow: "0 0 20px rgba(99, 102, 241, 0.3)",
-                "glow-lg": "0 0 40px rgba(99, 102, 241, 0.4)",
+                // Efek glow disesuaikan menjadi biru agar senada
+                glow: "0 0 20px rgba(50, 114, 169, 0.3)",
+                "glow-lg": "0 0 40px rgba(50, 114, 169, 0.4)",
                 "inner-lg": "inset 0 4px 6px -1px rgb(0 0 0 / 0.1)",
             },
             animation: {

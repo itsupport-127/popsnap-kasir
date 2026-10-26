@@ -8,6 +8,7 @@ use App\Models\Product;
 use App\Models\Promo;
 use App\Models\PromoBuyGetItem;
 use App\Models\PromoQtyBreak;
+use App\Models\TransactionDetail;
 use Carbon\CarbonInterface;
 use Illuminate\Support\Collection;
 
@@ -49,11 +50,16 @@ class PromoService
 
     /**
      * Promo otomatis saja (siap diterapkan tanpa interaksi kasir).
+     * $paymentMethod dipakai buat nolak promo otomatis yang punya syarat
+     * "hanya cashless"/"hanya cash" tapi metode bayar yang dipakai kasir
+     * tidak cocok. NULL = belum tahu metode bayarnya (masih preview awal),
+     * jadi tetap ditampilkan dulu — sama seperti voucher manual.
      */
-    public function getAutoPromos(?CarbonInterface $at = null): Collection
+    public function getAutoPromos(?CarbonInterface $at = null, ?string $paymentMethod = null): Collection
     {
         return $this->getActivePromos($at)
             ->filter(fn (Promo $promo) => $promo->isAuto())
+            ->filter(fn (Promo $promo) => $promo->matchesPaymentMethod($paymentMethod))
             ->values();
     }
 
@@ -63,13 +69,13 @@ class PromoService
      * itu ditangani terpisah lewat previewManualPromo()/applyManualPromo()
      * supaya kasir bisa pilih kapan promo manual diaktifkan.
      */
-    public function previewCart(iterable $carts, ?Customer $customer = null, ?CarbonInterface $at = null): array
+    public function previewCart(iterable $carts, ?Customer $customer = null, ?CarbonInterface $at = null, ?string $paymentMethod = null): array
     {
         $cartCollection = collect($carts)
             ->filter(fn ($cart) => $cart instanceof Cart && $cart->product)
             ->values();
 
-        return $this->buildAutoPreview($cartCollection, $customer, $this->getAutoPromos($at));
+        return $this->buildAutoPreview($cartCollection, $customer, $this->getAutoPromos($at, $paymentMethod));
     }
 
     public function previewCartWithPromos(iterable $carts, ?Customer $customer, Collection $autoPromos): array
@@ -668,7 +674,8 @@ class PromoService
         ?Customer $customer,
         int $subtotalAfterAutoPromo = 0,
         ?CarbonInterface $at = null,
-        array $cartItems = []
+        array $cartItems = [],
+        ?string $paymentMethod = null
     ): Collection {
         $at = $at ?? now();
 
@@ -700,7 +707,15 @@ class PromoService
 
         return $personal->merge($general)
             ->filter(fn (Promo $promo) => $promo->usageAvailable())
+            ->filter(fn (Promo $promo) => $promo->matchesPaymentMethod($paymentMethod))
             ->filter(fn (Promo $promo) => $subtotalAfterAutoPromo >= (int) $promo->minimum_order)
+            ->filter(function (Promo $promo) use ($customer) {
+                if ($promo->usage_limit_mode !== Promo::USAGE_LIMIT_PER_CUSTOMER || ! $customer) {
+                    return true;
+                }
+
+                return ! $this->customerAlreadyUsedPromo($customer, $promo);
+            })
             ->filter(function (Promo $promo) use ($cartItems) {
                 // Promo dengan target produk/kategori tertentu hanya tampil
                 // kalau ada item yang cocok di keranjang saat ini. Target
@@ -743,7 +758,8 @@ class PromoService
         mixed $promo,
         int $subtotalAfterAutoPromo,
         ?CarbonInterface $at = null,
-        array $cartItems = []
+        array $cartItems = [],
+        ?string $paymentMethod = null
     ): ?Promo {
         $at = $at ?? now();
 
@@ -752,6 +768,10 @@ class PromoService
         }
 
         if (! $promo->matchesCustomerScope($customer)) {
+            return null;
+        }
+
+        if (! $promo->matchesPaymentMethod($paymentMethod)) {
             return null;
         }
 
@@ -771,6 +791,18 @@ class PromoService
             return null;
         }
 
+        // Mode "1x per pelanggan" — begitu pelanggan ini pernah berhasil
+        // pakai kode ini (di transaksi manapun, kapanpun, dicek dari
+        // transaction_details.promo_id), kode ini nggak muncul/ditolak lagi
+        // buat pelanggan yang sama. Kalau transaksinya belum ada pelanggan
+        // terdaftar (walk-in / null), pengecekan ini dilewati — nggak ada
+        // cara ngelacak "pelanggan yang sama" tanpa identitas.
+        if ($promo->usage_limit_mode === Promo::USAGE_LIMIT_PER_CUSTOMER && $customer) {
+            if ($this->customerAlreadyUsedPromo($customer, $promo)) {
+                return null;
+            }
+        }
+
         if (in_array($promo->discount_kind, [Promo::KIND_BUY_X_GET_Y, Promo::KIND_QTY_BREAK], true) && $cartItems !== []) {
             $result = $this->calculateManualPromoDiscount($promo, $subtotalAfterAutoPromo, $cartItems);
             if ((int) $result['discount'] <= 0 && empty($result['free_items'])) {
@@ -782,9 +814,23 @@ class PromoService
     }
 
     /**
+     * Cek apakah pelanggan ini sudah PERNAH berhasil pakai kode promo ini,
+     * di transaksi manapun sebelumnya (dilihat dari transaction_details.
+     * promo_id, yang sekarang tercatat baik buat promo otomatis maupun
+     * voucher manual). Dipakai buat mode usage_limit_mode="per_customer".
+     */
+    public function customerAlreadyUsedPromo(Customer $customer, Promo $promo): bool
+    {
+        return TransactionDetail::query()
+            ->where('promo_id', $promo->id)
+            ->whereHas('transaction', fn ($query) => $query->where('customer_id', $customer->id))
+            ->exists();
+    }
+
+    /**
      * @return array{discount: int, free_items: array}
      */
-    public function calculateManualPromoDiscount(Promo $promo, int $subtotalAfterAutoPromo, array $cartItems = []): array
+    public function calculateManualPromoDiscount(Promo $promo, int $subtotalAfterAutoPromo, array $cartItems = [], ?array &$remainingByCartId = null): array
     {
         if ($promo->discount_kind === Promo::KIND_BUY_X_GET_Y) {
             return $this->calculateManualBogoDiscount($promo, $cartItems);
@@ -794,11 +840,164 @@ class PromoService
             return $this->calculateManualQtyBreakDiscount($promo, $cartItems);
         }
 
-        $discount = match ($promo->discount_type) {
-            Promo::TYPE_PERCENTAGE => (int) round($subtotalAfterAutoPromo * ((float) $promo->discount_value / 100)),
-            Promo::TYPE_FIXED_AMOUNT => (int) round((float) $promo->discount_value),
-            default => 0,
-        };
+        // PENTING: diskon nominal/persen manual (mis. kode "PANJAT17") harus
+        // dihitung dari harga item yang COCOK TARGET-nya saja (produk/kategori
+        // tertentu), bukan dari total seluruh keranjang. Sebelumnya kode ini
+        // langsung pakai $subtotalAfterAutoPromo (total keranjang) tanpa
+        // filter sama sekali — jadi kalau target_type=kategori, item di luar
+        // kategori itu ikut kepotong juga. Sekarang di-scope dulu ke item
+        // yang cocok, sama seperti BOGO & grosir bertingkat manual di atas.
+        if ($promo->target_type === Promo::TARGET_ALL) {
+            $eligibleItems = collect($cartItems);
+        } else {
+            $eligibleItems = collect($cartItems)->filter(function ($item) use ($promo) {
+                return match ($promo->target_type) {
+                    Promo::TARGET_PRODUCT => (int) data_get($item, 'product_id') === (int) $promo->product_id,
+                    Promo::TARGET_CATEGORY => (int) data_get($item, 'category_id') === (int) $promo->category_id,
+                    default => false,
+                };
+            })->values();
+        }
+
+        if ($eligibleItems->isEmpty()) {
+            return ['discount' => 0, 'free_items' => []];
+        }
+
+        // Sisa nilai per baris keranjang (cart_id => rupiah) setelah voucher-
+        // voucher sebelumnya dipotong. Dikirim by-reference dari LoyaltyService
+        // supaya voucher ke-2, ke-3, dst dalam satu transaksi menghitung dari
+        // SISA barang itu (kali sisa berturut-turut / successive discount),
+        // bukan dari harga awal barang lagi. Kalau null (dipanggil sendirian,
+        // misal validasi/preview 1 voucher), dibuat sekali pakai dari $cartItems.
+        // INI YANG DULU HILANG — sebelumnya tiap voucher menghitung ulang dari
+        // harga ASLI barang, jadi 2 voucher besar (mis. 81% + 45%) di barang
+        // yang sama bisa total >100% dan bikin barang itu Rp0 tanpa sengaja.
+        if ($remainingByCartId === null) {
+            $remainingByCartId = collect($cartItems)->mapWithKeys(fn ($item) => [
+                (int) data_get($item, 'cart_id') => (int) data_get($item, 'line_total', data_get($item, 'price', 0)),
+            ])->all();
+        }
+
+        // Mode "Total Transaksi": diskon dihitung SEKALIGUS dari sisa
+        // subtotal semua barang yang eligible (bukan nempel per barang
+        // satu-satu kayak mode 'per_item'). applies_to_qty diabaikan di
+        // mode ini karena nggak relevan (nggak ada konsep "maks N barang").
+        // Kalau kode ini dipanggil berkali-kali dalam 1 transaksi (dimenangkan
+        // >1x, applied lewat counter di kasir), tiap panggilan menghitung
+        // dari SISA subtotal yang sudah dikurangi panggilan sebelumnya —
+        // jadi otomatis compounding, sama polanya kayak 2 kode beda ditumpuk.
+        if ($promo->isTotalTransactionScope()) {
+            $eligibleRemainingTotal = $eligibleItems->sum(function ($item) use ($remainingByCartId) {
+                $cartId = (int) data_get($item, 'cart_id');
+
+                return max(0, (int) ($remainingByCartId[$cartId] ?? data_get($item, 'line_total', data_get($item, 'price', 0))));
+            });
+
+            if ($eligibleRemainingTotal <= 0) {
+                return ['discount' => 0, 'free_items' => []];
+            }
+
+            $discount = match ($promo->discount_type) {
+                Promo::TYPE_PERCENTAGE => (int) round($eligibleRemainingTotal * ((float) $promo->discount_value / 100)),
+                Promo::TYPE_FIXED_AMOUNT => min($eligibleRemainingTotal, (int) round((float) $promo->discount_value)),
+                default => 0,
+            };
+            $discount = min($eligibleRemainingTotal, max(0, $discount));
+
+            // Sama kayak mode per_item: default nggak boleh sampai Rp0,
+            // kecuali allow_zero_price sengaja dinyalain.
+            if (! $promo->allow_zero_price && $discount >= $eligibleRemainingTotal) {
+                $discount = $eligibleRemainingTotal - 1;
+            }
+
+            if ($discount <= 0) {
+                return ['discount' => 0, 'free_items' => []];
+            }
+
+            // Sebarin potongan ke tiap baris keranjang eligible secara
+            // proporsional (biar $remainingByCartId tetap akurat buat
+            // voucher/kemenangan berikutnya yang menghitung dari SISA barang).
+            $distributed = 0;
+            $eligibleItems->each(function ($item) use (&$distributed, $discount, $eligibleRemainingTotal, &$remainingByCartId) {
+                $cartId = (int) data_get($item, 'cart_id');
+                $remainingLineValue = max(0, (int) ($remainingByCartId[$cartId] ?? data_get($item, 'line_total', data_get($item, 'price', 0))));
+
+                if ($remainingLineValue <= 0) {
+                    return;
+                }
+
+                $share = (int) round($discount * ($remainingLineValue / $eligibleRemainingTotal));
+                $share = min($share, $remainingLineValue);
+                $remainingByCartId[$cartId] = max(0, $remainingLineValue - $share);
+                $distributed += $share;
+            });
+
+            return [
+                'discount' => min($subtotalAfterAutoPromo, max(0, $distributed)),
+                'free_items' => [],
+            ];
+        }
+
+        $applyToQty = (int) ($promo->applies_to_qty ?? 0);
+        $sorted = $applyToQty > 0
+            ? $eligibleItems->sortBy(fn ($item) => (int) data_get($item, 'effective_unit_price', data_get($item, 'base_unit_price', 0)))
+            : $eligibleItems;
+
+        $remainingQtyToTouch = $applyToQty > 0 ? $applyToQty : null;
+        $discount = 0;
+
+        foreach ($sorted as $item) {
+            if ($remainingQtyToTouch !== null && $remainingQtyToTouch <= 0) {
+                break;
+            }
+
+            $cartId = (int) data_get($item, 'cart_id');
+            $qty = max(1, (int) data_get($item, 'qty', 1));
+            $remainingLineValue = (int) ($remainingByCartId[$cartId] ?? data_get($item, 'line_total', data_get($item, 'price', 0)));
+
+            if ($remainingLineValue <= 0) {
+                continue;
+            }
+
+            $qtyAvailableHere = $remainingQtyToTouch === null ? $qty : min($qty, max(0, $remainingQtyToTouch));
+            if ($qtyAvailableHere <= 0) {
+                continue;
+            }
+
+            // Bagian dari sisa nilai baris ini yang kena jatah voucher —
+            // proporsional kalau cuma sebagian qty di baris itu yang kepakai.
+            $touchedValue = $qtyAvailableHere >= $qty
+                ? $remainingLineValue
+                : (int) round($remainingLineValue * ($qtyAvailableHere / $qty));
+            $touchedValue = min($touchedValue, $remainingLineValue);
+
+            $lineDiscount = match ($promo->discount_type) {
+                Promo::TYPE_PERCENTAGE => (int) round($touchedValue * ((float) $promo->discount_value / 100)),
+                Promo::TYPE_FIXED_AMOUNT => min($touchedValue, (int) round((float) $promo->discount_value) * $qtyAvailableHere),
+                default => 0,
+            };
+            $lineDiscount = min($touchedValue, max(0, $lineDiscount));
+
+            // Mode "jangan sampai gratis" (default): kalau potongan ini bakal
+            // ngenolin harga barang, sisain minimal Rp1 — supaya walau ada 2+
+            // voucher gede numpuk (mis. 81% + 45%) di barang yang sama, barang
+            // itu tetap ada nilainya. allow_zero_price=true kalau memang
+            // sengaja dibuat promo "gratis 1 barang".
+            if (! $promo->allow_zero_price && $lineDiscount >= $touchedValue && $touchedValue > 0) {
+                $lineDiscount = $touchedValue - 1;
+            }
+
+            if ($lineDiscount <= 0) {
+                continue;
+            }
+
+            $discount += $lineDiscount;
+            $remainingByCartId[$cartId] = max(0, $remainingLineValue - $lineDiscount);
+
+            if ($remainingQtyToTouch !== null) {
+                $remainingQtyToTouch -= $qtyAvailableHere;
+            }
+        }
 
         return [
             'discount' => min($subtotalAfterAutoPromo, max(0, $discount)),
@@ -938,6 +1137,8 @@ class PromoService
             'discount_type' => $promo->discount_type,
             'discount_kind_label' => $promo->discountKindLabel(),
             'discount_value' => (float) $promo->discount_value,
+            'discount_scope' => $promo->discount_scope ?? Promo::DISCOUNT_SCOPE_PER_ITEM,
+            'applies_to_qty' => $promo->applies_to_qty,
             'minimum_order' => (int) $promo->minimum_order,
             'target_type' => $promo->target_type,
             'buy_qty' => $promo->buy_qty,

@@ -259,17 +259,57 @@ class DocumentController extends Controller
         }
         $out .= $line;
 
-        $promoDiscount   = $transaction->details->sum('discount_total');
+        // "discount_total" per item itu GABUNGAN promo otomatis + voucher +
+        // diskon manual per-item — porsi voucher & diskon-item harus
+        // dikurangi dulu supaya "Promo" nggak dobel-hitung sama baris
+        // Voucher/Diskon Manual yang ditampilkan terpisah di bawah.
+        $itemManualDiscountTotal = $transaction->details->sum('item_manual_discount');
+        $promoDiscount   = $transaction->details->sum('discount_total')
+            - $transaction->details->sum('voucher_discount')
+            - $itemManualDiscountTotal;
         $voucherDiscount = $transaction->customer_voucher_discount ?? 0;
         $loyaltyDiscount = $transaction->loyalty_discount_total ?? 0;
-        $subtotal        = ($transaction->grand_total ?? 0) + ($transaction->discount ?? 0) - ($transaction->shipping_cost ?? 0) + $promoDiscount + $voucherDiscount + $loyaltyDiscount;
+        $manualDiscount  = ($transaction->discount ?? 0) + $itemManualDiscountTotal;
+        $subtotal        = ($transaction->grand_total ?? 0) + $manualDiscount - ($transaction->shipping_cost ?? 0) + $promoDiscount + $voucherDiscount + $loyaltyDiscount;
 
         $out .= $kv('Subtotal', $rp($subtotal));
+        // Sebelumnya breakdown diskon ini nggak pernah ditampilkan di struk
+        // fisik (cuma ada di preview layar/PDF) — pelanggan nggak tahu asal
+        // selisih antara Subtotal & TOTAL. Sekarang disamain kayak versi lain.
+        if ($promoDiscount > 0) {
+            $out .= $kv('Promo', '-'.$rp($promoDiscount));
+        }
+        if ($manualDiscount > 0) {
+            $out .= $kv('Diskon Manual', '-'.$rp($manualDiscount));
+        }
+        if ($voucherDiscount > 0) {
+            $out .= $kv('Voucher', '-'.$rp($voucherDiscount));
+        }
+        if ($loyaltyDiscount > 0) {
+            $out .= $kv('Redeem Poin', '-'.$rp($loyaltyDiscount));
+        }
+        if (($transaction->shipping_cost ?? 0) > 0) {
+            $out .= $kv('Ongkir', $rp($transaction->shipping_cost));
+        }
         $out .= $boldOn.$kv('TOTAL', $rp($transaction->grand_total)).$boldOff;
         $out .= $line;
 
-        $method = strtoupper($transaction->payment_method ?? 'CASH');
-        $out .= $kv("Bayar ({$method})", $rp($transaction->cash));
+        $method = \App\Models\Transaction::receiptPaymentLabel($transaction->payment_method);
+        // "cash" di database cuma keisi buat pembayaran tunai — buat QRIS/
+        // transfer/gateway online kolom itu selalu 0, jadi kalau dipakai
+        // langsung struk bakal salah nampilin "Bayar (QRIS) Rp 0" walau
+        // pelanggan sudah bayar lunas. Nota belum dibayar (pay_later)
+        // sengaja tetap Rp 0 karena memang belum ada yang dibayar.
+        $paidAmount = in_array($transaction->payment_method, ['cash', 'pay_later'], true)
+            ? $transaction->cash
+            : $transaction->grand_total;
+
+        if ($transaction->payment_method === 'dual_cash_qris') {
+            $out .= $kv('Bayar (TUNAI)', $rp($transaction->dual_cash ?? 0));
+            $out .= $kv('Bayar (QRIS)', $rp($transaction->dual_qris ?? 0));
+        } else {
+            $out .= $kv("Bayar ({$method})", $rp($paidAmount));
+        }
 
         if (($transaction->change ?? 0) > 0) {
             $out .= $boldOn.$kv('Kembali', $rp($transaction->change)).$boldOff;

@@ -8,12 +8,99 @@ use App\Models\SalesReturn;
 use App\Models\StockMutation;
 use App\Models\StockOpname;
 use App\Models\SupplierReturn;
+use App\Models\Transaction;
 
 class StockMutationService
 {
     public function __construct(
         private readonly AuditLogService $auditLogService
     ) {}
+
+    /**
+     * recordSale — catat pengurangan stok akibat penjualan (checkout kasir),
+     * biar histori mutasi stok lengkap (sebelumnya cuma stok masuk & adjustment
+     * manual yang tercatat, penjualan langsung update stok tanpa jejak).
+     */
+    public function recordSale(
+        Product $product,
+        Transaction $transaction,
+        int $qty,
+        int $stockBefore,
+        int $stockAfter,
+        ?int $userId = null
+    ): ?StockMutation {
+        if ($qty <= 0) {
+            return null;
+        }
+
+        return StockMutation::create([
+            'product_id' => $product->id,
+            'reference_type' => 'sale',
+            'reference_id' => $transaction->id,
+            'mutation_type' => 'out',
+            'qty' => $qty,
+            'stock_before' => $stockBefore,
+            'stock_after' => $stockAfter,
+            'notes' => 'Terjual di transaksi '.$transaction->invoice.'.',
+            'created_by' => $userId,
+        ]);
+    }
+
+    /**
+     * revertSale — kembalikan stok kalau pembayaran (QRIS/gateway) yang
+     * tadinya masih pending ternyata gagal/expired. Stok sudah kepotong pas
+     * checkout (sebelum pembayaran dikonfirmasi), jadi begitu gateway bilang
+     * gagal, stok itu harus balik lagi.
+     */
+    public function revertSale(
+        Product $product,
+        Transaction $transaction,
+        int $qty,
+        int $stockBefore,
+        int $stockAfter,
+        ?int $userId = null
+    ): ?StockMutation {
+        if ($qty <= 0) {
+            return null;
+        }
+
+        return StockMutation::create([
+            'product_id' => $product->id,
+            'reference_type' => 'payment_failed',
+            'reference_id' => $transaction->id,
+            'mutation_type' => 'in',
+            'qty' => $qty,
+            'stock_before' => $stockBefore,
+            'stock_after' => $stockAfter,
+            'notes' => 'Stok dikembalikan — pembayaran transaksi '.$transaction->invoice.' gagal/expired.',
+            'created_by' => $userId,
+        ]);
+    }
+
+    /**
+     * restoreStockForTransaction — loop semua item transaksi & kembalikan
+     * stoknya masing-masing. Dipakai dari 2 tempat: webhook payment gateway
+     * (otomatis) dan endpoint ubah status manual oleh admin (TransactionController
+     * ::updateStatus), biar konsisten — apapun jalurnya, gagal bayar = stok balik.
+     */
+    public function restoreStockForTransaction(Transaction $transaction, ?int $userId = null): void
+    {
+        $transaction->loadMissing('details');
+
+        foreach ($transaction->details as $detail) {
+            $product = Product::where('id', $detail->product_id)->lockForUpdate()->first();
+
+            if (! $product) {
+                continue;
+            }
+
+            $stockBefore = $product->stock;
+            $product->stock = $product->stock + $detail->qty;
+            $product->save();
+
+            $this->revertSale($product, $transaction, $detail->qty, $stockBefore, $product->stock, $userId);
+        }
+    }
 
     public function recordInitialStock(Product $product, ?int $userId = null): ?StockMutation
     {

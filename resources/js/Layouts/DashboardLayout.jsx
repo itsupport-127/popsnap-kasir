@@ -39,13 +39,20 @@ export default function AppLayout({ children }) {
     }, []);
 
     const toggleSidebar = () => setSidebarOpen(!sidebarOpen);
+    // Nutup sidebar otomatis pas klik menu — cuma di mobile (di desktop
+    // sidebar tetap kebuka, cuma collapse/expand lewat toggleSidebar).
+    const closeSidebarOnMobile = () => {
+        if (window.innerWidth < 768) {
+            setSidebarOpen(false);
+        }
+    };
     const securityWarnings = security?.warnings ?? [];
     const showSecurityWarnings =
         auth?.super === true && securityWarnings.length > 0;
 
     return (
         <div className="flex h-screen overflow-hidden bg-slate-100 dark:bg-slate-950 transition-colors duration-200">
-            <Sidebar sidebarOpen={sidebarOpen} />
+            <Sidebar sidebarOpen={sidebarOpen} onNavigate={closeSidebarOnMobile} />
             {/* Mobile overlay */}
             <div
                 className={`fixed inset-0 bg-slate-900/40 md:hidden transition-opacity duration-300 ${

@@ -82,6 +82,8 @@ export default function Form({
         product_id: promo?.product_id ? String(promo.product_id) : "",
         category_id: promo?.category_id ? String(promo.category_id) : "",
         customer_scope: promo?.customer_scope ?? "all",
+        payment_method_restriction: promo?.payment_method_restriction ?? "",
+        usage_limit_mode: promo?.usage_limit_mode ?? "",
         eligible_loyalty_tiers: promo?.eligible_loyalty_tiers ?? [],
         discount_type: promo?.discount_type ?? "percentage",
         discount_value:
@@ -89,6 +91,9 @@ export default function Form({
                 ? String(promo.discount_value)
                 : "",
         minimum_order: promo?.minimum_order ? String(promo.minimum_order) : "0",
+        applies_to_qty: promo?.applies_to_qty ? String(promo.applies_to_qty) : "",
+        discount_scope: promo?.discount_scope ?? "per_item",
+        allow_zero_price: promo?.allow_zero_price ?? false,
         buy_qty: promo?.buy_qty ? String(promo.buy_qty) : "1",
         get_qty: promo?.get_qty ? String(promo.get_qty) : "1",
         get_product_id: promo?.get_product_id ? String(promo.get_product_id) : "",
@@ -523,6 +528,65 @@ export default function Form({
                                     )}
                                 </select>
                             </div>
+                            <div>
+                                <label className="mb-2 block text-sm font-medium text-slate-700 dark:text-slate-300">
+                                    Metode Bayar
+                                </label>
+                                <select
+                                    value={data.payment_method_restriction}
+                                    onChange={(event) =>
+                                        setData(
+                                            "payment_method_restriction",
+                                            event.target.value
+                                        )
+                                    }
+                                    className={inputClass}
+                                >
+                                    <option value="">Semua metode bayar</option>
+                                    <option value="cashless_only">
+                                        Hanya Cashless (non-tunai)
+                                    </option>
+                                    <option value="cash_only">Hanya Tunai (cash)</option>
+                                </select>
+                                <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                                    Kalau dipilih, promo otomatis ditolak sistem
+                                    kalau kasir pakai metode bayar yang nggak sesuai.
+                                </p>
+                                <InputError
+                                    message={errors.payment_method_restriction}
+                                />
+                            </div>
+                            <div>
+                                <label className="mb-2 block text-sm font-medium text-slate-700 dark:text-slate-300">
+                                    Batas Pemakaian per Pelanggan
+                                </label>
+                                <select
+                                    value={data.usage_limit_mode ?? ""}
+                                    onChange={(event) =>
+                                        setData(
+                                            "usage_limit_mode",
+                                            event.target.value || null
+                                        )
+                                    }
+                                    className={inputClass}
+                                >
+                                    <option value="">
+                                        Per Transaksi (boleh dipakai berkali-kali)
+                                    </option>
+                                    <option value="per_customer">
+                                        1x per Pelanggan (seumur hidup)
+                                    </option>
+                                </select>
+                                <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                                    "1x per Pelanggan" — begitu pelanggan pernah
+                                    berhasil pakai kode ini di transaksi manapun,
+                                    kode ini nggak bisa dipakai lagi oleh
+                                    pelanggan yang sama. Cocok buat kode promo
+                                    undian (mis. Panjat Promo) biar nggak diklaim
+                                    berkali-kali orang yang sama.
+                                </p>
+                                <InputError message={errors.usage_limit_mode} />
+                            </div>
                             {data.target_type === "product" && (
                                 <div className="md:col-span-2">
                                     <label className="mb-2 block text-sm font-medium text-slate-700 dark:text-slate-300">
@@ -670,6 +734,121 @@ export default function Form({
                                     <InputError message={errors.discount_value} />
                                 </div>
                             </div>
+                            {data.discount_kind === "standard_discount" && (
+                                <div className="mt-4">
+                                    <label className="mb-2 block text-sm font-medium text-slate-700 dark:text-slate-300">
+                                        Cakupan Diskon
+                                    </label>
+                                    <div className="inline-flex rounded-lg border border-slate-200 dark:border-slate-700 overflow-hidden">
+                                        {[
+                                            { value: "per_item", label: "Per Item" },
+                                            { value: "total_transaction", label: "Total Transaksi" },
+                                        ].map((option) => (
+                                            <button
+                                                key={option.value}
+                                                type="button"
+                                                onClick={() => setData("discount_scope", option.value)}
+                                                className={`px-4 py-2 text-sm font-medium transition-colors ${
+                                                    data.discount_scope === option.value
+                                                        ? "bg-primary-600 text-white"
+                                                        : "bg-white text-slate-600 hover:bg-slate-50 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700"
+                                                }`}
+                                            >
+                                                {option.label}
+                                            </button>
+                                        ))}
+                                    </div>
+                                    <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                                        Diskon nempel ke barang <strong>satu-satu</strong>. Kalau
+                                        customer menang kode sekaligus beberapa kali (termasuk kode
+                                        yang sama berkali-kali), tiap kemenangan otomatis
+                                        dialokasikan ke barang yang berbeda — nggak numpuk ke 1
+                                        barang. Cocok buat hadiah undian per-item kayak Panjat
+                                        Promo.
+                                    </p>
+                                    <InputError message={errors.discount_scope} />
+                                </div>
+                            )}
+                            {data.discount_kind === "standard_discount" &&
+                                data.discount_scope === "per_item" && (
+                                <div className="mt-4">
+                                    <label className="mb-2 block text-sm font-medium text-slate-700 dark:text-slate-300">
+                                        Berlaku untuk Maks. Berapa Item per Kemenangan?
+                                    </label>
+                                    <input
+                                        type="number"
+                                        min="1"
+                                        placeholder="Kosongin = semua item yang cocok target"
+                                        value={data.applies_to_qty}
+                                        onChange={(event) =>
+                                            setData(
+                                                "applies_to_qty",
+                                                event.target.value
+                                            )
+                                        }
+                                        className={inputClass}
+                                    />
+                                    <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                                        Kosongin kalau 1 kemenangan/pemakaian kode cuma nutup{" "}
+                                        <strong>1 barang</strong> (paling umum — cocok buat
+                                        undian). Isi angka lebih besar (misal <strong>2</strong>)
+                                        kalau 1 kemenangan boleh nutup beberapa barang sekaligus.
+                                    </p>
+                                    <InputError message={errors.applies_to_qty} />
+                                </div>
+                            )}
+                            {data.discount_kind === "standard_discount" &&
+                                data.discount_scope === "total_transaction" && (
+                                <p className="mt-4 text-xs text-slate-500 dark:text-slate-400 rounded-xl border border-slate-200 dark:border-slate-700 p-3">
+                                    Mode ini motong <strong>sekaligus dari sisa subtotal</strong>{" "}
+                                    seluruh barang yang cocok target (bukan per barang satu-satu).
+                                    Kalau kode ini dimenangkan berkali-kali dalam 1 transaksi,
+                                    tiap kemenangan menghitung dari sisa subtotal setelah
+                                    kemenangan sebelumnya dipotong.
+                                </p>
+                            )}
+                            {data.discount_kind === "standard_discount" && (
+                                <div className="mt-4 flex items-start justify-between gap-4 rounded-xl border border-slate-200 dark:border-slate-700 p-3">
+                                    <div>
+                                        <p className="text-sm font-medium text-slate-700 dark:text-slate-300">
+                                            Boleh sampai bikin barang gratis (Rp0)?
+                                        </p>
+                                        <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                                            Default <strong>tidak boleh</strong> — kalau ada
+                                            beberapa voucher numpuk di 1 barang yang sama
+                                            (misal 81% + 45%), sistem otomatis nyisain
+                                            minimal Rp1 supaya barang itu nggak pernah kejual
+                                            gratis tanpa disengaja. Nyalain toggle ini cuma
+                                            kalau memang niat bikin promo &quot;gratis 1
+                                            barang&quot;.
+                                        </p>
+                                    </div>
+                                    <button
+                                        type="button"
+                                        role="switch"
+                                        aria-checked={data.allow_zero_price}
+                                        onClick={() =>
+                                            setData(
+                                                "allow_zero_price",
+                                                !data.allow_zero_price
+                                            )
+                                        }
+                                        className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors ${
+                                            data.allow_zero_price
+                                                ? "bg-primary-600"
+                                                : "bg-slate-300 dark:bg-slate-600"
+                                        }`}
+                                    >
+                                        <span
+                                            className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                                                data.allow_zero_price
+                                                    ? "translate-x-6"
+                                                    : "translate-x-1"
+                                            }`}
+                                        />
+                                    </button>
+                                </div>
+                            )}
                         </CardSection>
                     )}
 

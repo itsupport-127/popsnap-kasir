@@ -6,7 +6,7 @@ import React, {
     useRef,
 } from "react";
 import QrisStaticDisplay from "@/Components/Dashboard/QrisStaticDisplay";
-import { Head, router, usePage } from "@inertiajs/react";
+import { Head, Link, router, usePage } from "@inertiajs/react";
 import axios from "axios";
 import toast from "react-hot-toast";
 import POSLayout from "@/Layouts/POSLayout";
@@ -28,6 +28,7 @@ import {
     IconKeyboard,
     IconBarcode,
     IconTrash,
+    IconTag,
     IconCash,
     IconCreditCard,
     IconBuildingBank,
@@ -37,6 +38,8 @@ import {
     IconCheck,
     IconX,
     IconExternalLink,
+    IconMinus,
+    IconPlus,
 } from "@tabler/icons-react";
 
 const formatPrice = (value = 0) =>
@@ -51,6 +54,8 @@ export default function Index({
     carts_total = 0,
     heldCarts = [],
     activeCustomer = null,
+    editingTransactionId = null,
+    editingInvoice = null,
     customers = [],
     generalVouchers = [],
     products = [],
@@ -61,6 +66,7 @@ export default function Index({
     bankAccounts = [],
     qrisStaticConfig = null,
     loyaltyTierOptions = [],
+    memberRegistrationEnabled = true,
 }) {
     const {
         auth,
@@ -83,6 +89,8 @@ export default function Index({
     const [pricingPreview, setPricingPreview] = useState(initialPricingPreview);
     const [isLoadingPricing, setIsLoadingPricing] = useState(false);
     const [discountInput, setDiscountInput] = useState("");
+    const [discountMode, setDiscountMode] = useState("nominal"); // "nominal" | "percent"
+    const [discountPercentInput, setDiscountPercentInput] = useState("");
     const [redeemPointsInput, setRedeemPointsInput] = useState("");
     const [cashInput, setCashInput] = useState("");
     // Dual payment (Tunai + QRIS)
@@ -104,7 +112,56 @@ export default function Index({
     const [numpadOpen, setNumpadOpen] = useState(false);
     const [showShortcuts, setShowShortcuts] = useState(false);
     const [selectedBankAccount, setSelectedBankAccount] = useState(null);
+    // PENTING: array ini BOLEH punya id yang sama berkali-kali. Setiap
+    // kemunculan mewakili 1x pemakaian/kemenangan kode itu dalam transaksi
+    // ini (dikontrol lewat counter +/- di kartu voucher, buat kode yang
+    // bisa dimenangkan berkali-kali kayak Panjat Promo). Backend
+    // (TransactionController::resolveVouchersByIds) sengaja nggak
+    // nge-dedupe id yang sama supaya tiap pemakaian dihitung sendiri.
     const [selectedVoucherIds, setSelectedVoucherIds] = useState([]);
+    // Diskon manual PER ITEM — beda dari "Diskon Manual" transaksi di bawah
+    // (yang motong TOTAL keranjang). Kasir bisa kasih diskon Rp/% khusus ke
+    // 1 baris keranjang tertentu. Key = cart_id, value = { mode, value }.
+    const [itemDiscounts, setItemDiscounts] = useState({});
+    const [openItemDiscountCartId, setOpenItemDiscountCartId] = useState(null);
+
+    const setItemDiscountMode = useCallback((cartId, mode) => {
+        setItemDiscounts((prev) => ({
+            ...prev,
+            [cartId]: { mode, value: prev[cartId]?.value ?? "" },
+        }));
+    }, []);
+
+    const setItemDiscountValue = useCallback((cartId, value) => {
+        setItemDiscounts((prev) => ({
+            ...prev,
+            [cartId]: { mode: prev[cartId]?.mode ?? "nominal", value },
+        }));
+    }, []);
+
+    const clearItemDiscount = useCallback((cartId) => {
+        setItemDiscounts((prev) => {
+            const next = { ...prev };
+            delete next[cartId];
+            return next;
+        });
+        setOpenItemDiscountCartId(null);
+    }, []);
+
+    // Payload item_discounts yang dikirim ke backend — cuma entri yang
+    // isinya beneran ada nilainya (>0).
+    const itemDiscountsPayload = useMemo(
+        () =>
+            Object.entries(itemDiscounts)
+                .filter(([, entry]) => Number(entry.value) > 0)
+                .map(([cartId, entry]) => ({
+                    cart_id: Number(cartId),
+                    mode: entry.mode,
+                    value: Number(entry.value),
+                })),
+        [itemDiscounts]
+    );
+
     const [promoCodeInput, setPromoCodeInput] = useState("");
     const [openingCashInput, setOpeningCashInput] = useState("");
     const [shiftNotesInput, setShiftNotesInput] = useState("");
@@ -171,10 +228,6 @@ export default function Index({
     const LowStockAlerts = () => null;
 
     // Calculations
-    const discount = useMemo(
-        () => Math.max(0, Number(discountInput) || 0),
-        [discountInput],
-    );
     const shipping = useMemo(
         () => Math.max(0, Number(shippingInput) || 0),
         [shippingInput],
@@ -196,10 +249,38 @@ export default function Index({
         () => Number(pricingPreview?.summary?.loyalty_discount_total ?? 0),
         [pricingPreview],
     );
+    const itemManualDiscount = useMemo(
+        () => Number(pricingPreview?.summary?.item_manual_discount_total ?? 0),
+        [pricingPreview],
+    );
     const subtotal = useMemo(
         () => Number(pricingPreview?.summary?.subtotal_after_promo ?? 0),
         [pricingPreview],
     );
+    // Basis diskon manual = sisa belanja SETELAH promo item, voucher, dan
+    // redeem poin — persis basis yang dipakai backend (LoyaltyService::
+    // previewCheckout, variabel $afterLoyalty) buat motong "Diskon Transaksi"
+    // di step terakhir. Dulu basisnya masih `subtotal` (subtotal_after_promo,
+    // sebelum voucher dipotong) — kalau ada voucher aktif, persen yang
+    // diketik kasir jadi salah hitung / ke-clamp diam-diam di backend.
+    const manualDiscountBase = useMemo(
+        () =>
+            Math.max(
+                0,
+                subtotal - voucherDiscount - itemManualDiscount - loyaltyDiscount,
+            ),
+        [subtotal, voucherDiscount, itemManualDiscount, loyaltyDiscount],
+    );
+    // Diskon manual: bisa diisi nominal (Rp) langsung, atau persen — kalau
+    // persen, dihitung dari manualDiscountBase dan dibulatkan ke rupiah,
+    // lalu di-clamp biar nggak melebihi basis itu.
+    const discount = useMemo(() => {
+        if (discountMode === "percent") {
+            const pct = Math.max(0, Math.min(100, Number(discountPercentInput) || 0));
+            return Math.min(manualDiscountBase, Math.round((manualDiscountBase * pct) / 100));
+        }
+        return Math.max(0, Math.min(manualDiscountBase, Number(discountInput) || 0));
+    }, [discountMode, discountInput, discountPercentInput, manualDiscountBase]);
     const payable = useMemo(
         () => Number(pricingPreview?.summary?.grand_total ?? 0),
         [pricingPreview],
@@ -243,6 +324,15 @@ export default function Index({
         let cancelled = false;
         setIsLoadingPricing(true);
 
+        // Metode bayar efektif — sama persis rumusnya kayak yang dipakai di
+        // backend pas commit transaksi, biar promo "hanya cashless"/"hanya
+        // cash" bisa difilter dari preview juga (bukan cuma pas submit final).
+        const effectivePaymentMethod = payLater
+            ? "pay_later"
+            : dualPayment
+              ? "dual_cash_qris"
+              : paymentMethod || "cash";
+
         axios
             .post(route("transactions.pricing-preview"), {
                 customer_id: selectedCustomer?.id ?? null,
@@ -250,6 +340,8 @@ export default function Index({
                 shipping_cost: shipping,
                 redeem_points: Number(redeemPointsInput || 0),
                 customer_voucher_ids: selectedVoucherIds,
+                payment_method: effectivePaymentMethod,
+                item_discounts: itemDiscountsPayload,
             })
             .then((response) => {
                 if (!cancelled) {
@@ -279,6 +371,10 @@ export default function Index({
         shipping,
         redeemPointsInput,
         selectedVoucherIds,
+        itemDiscountsPayload,
+        paymentMethod,
+        payLater,
+        dualPayment,
     ]);
 
     useEffect(() => {
@@ -301,6 +397,30 @@ export default function Index({
         });
     }, [pricingPreview?.eligible_vouchers]);
 
+    // Berapa kali tiap voucher (per id) dipakai di transaksi ini — dihitung
+    // dari jumlah kemunculan id itu di selectedVoucherIds.
+    const voucherCounts = useMemo(() => {
+        const counts = {};
+        selectedVoucherIds.forEach((id) => {
+            counts[id] = (counts[id] || 0) + 1;
+        });
+        return counts;
+    }, [selectedVoucherIds]);
+
+    const incrementVoucher = useCallback((voucherId) => {
+        setSelectedVoucherIds((prev) => [...prev, String(voucherId)]);
+    }, []);
+
+    const decrementVoucher = useCallback((voucherId) => {
+        setSelectedVoucherIds((prev) => {
+            const idx = prev.lastIndexOf(String(voucherId));
+            if (idx === -1) return prev;
+            const next = [...prev];
+            next.splice(idx, 1);
+            return next;
+        });
+    }, []);
+
     // Terapkan kode promo yang diketik manual di kolom "Punya Kode Promo?".
     // Bisa dipanggil lewat tombol Pakai maupun tekan Enter di input.
     // Voucher yang ketemu ditambahkan ke daftar voucher terpilih (mendukung
@@ -319,12 +439,20 @@ export default function Index({
         }
 
         const matchId = String(match.id);
-        setSelectedVoucherIds((prev) =>
-            prev.includes(matchId) ? prev : [...prev, matchId],
-        );
+        // Kode boleh dipakai berkali-kali dalam 1 transaksi (mis. customer
+        // menang kode yang sama lagi) — tiap submit nambah 1 kemenangan,
+        // sinkron dengan counter +/- di kartu voucher.
+        setSelectedVoucherIds((prev) => [...prev, matchId]);
         setPromoCodeInput("");
-        toast.success(`Voucher "${match.name}" diterapkan`);
-    }, [promoCodeInput, pricingPreview?.eligible_vouchers]);
+        const alreadyApplied = selectedVoucherIds.includes(matchId);
+        toast.success(
+            alreadyApplied
+                ? `Voucher "${match.name}" ditambah lagi (${
+                      (voucherCounts[matchId] || 0) + 1
+                  }x)`
+                : `Voucher "${match.name}" diterapkan`,
+        );
+    }, [promoCodeInput, pricingPreview?.eligible_vouchers, selectedVoucherIds, voucherCounts]);
 
     // Payment options
     const paymentOptions = useMemo(() => {
@@ -585,16 +713,24 @@ export default function Index({
         doSubmitTransaction();
     };
 
+    // Kalau lagi mode edit (editingTransactionId terisi), submit ke endpoint
+    // UPDATE transaksi yang sudah ada — bukan bikin transaksi baru.
+    const isEditMode = Boolean(editingTransactionId);
+    const submitRouteName = isEditMode ? "transactions.update" : "transactions.store";
+    const submitRouteParams = isEditMode ? editingTransactionId : undefined;
+    const submitMethod = isEditMode ? "put" : "post";
+
     // Submit transaksi ke server (dipanggil setelah konfirmasi dari modal)
     const doSubmitTransaction = async () => {
         setIsSubmitting(true);
 
         try {
-            const response = await axios.post(route("transactions.store"), {
+            const response = await axios[submitMethod](route(submitRouteName, submitRouteParams), {
                 customer_id: selectedCustomer.id,
                 discount,
                 redeem_points: Number(redeemPointsInput || 0),
                 customer_voucher_ids: selectedVoucherIds,
+                item_discounts: itemDiscountsPayload,
                 shipping_cost: shipping,
                 grand_total: payable,
                 cash: isCashPayment ? (isDualPayment ? dualCash : cash) : payable,
@@ -627,17 +763,18 @@ export default function Index({
                 null;
 
             if (redirectUrl && redirectUrl.includes("/print")) {
-                toast.success("Transaksi berhasil!");
+                toast.success(isEditMode ? "Transaksi berhasil diperbarui!" : "Transaksi berhasil!");
                 window.location.href = redirectUrl;
             } else {
-                // Fallback: pakai router.post biasa
-                router.post(
-                    route("transactions.store"),
+                // Fallback: pakai router.post/put biasa
+                router[submitMethod](
+                    route(submitRouteName, submitRouteParams),
                     {
                         customer_id: selectedCustomer.id,
                         discount,
                         redeem_points: Number(redeemPointsInput || 0),
                         customer_voucher_ids: selectedVoucherIds,
+                        item_discounts: itemDiscountsPayload,
                         shipping_cost: shipping,
                         grand_total: payable,
                         cash: isCashPayment ? (isDualPayment ? dualCash : cash) : payable,
@@ -658,17 +795,32 @@ export default function Index({
                         due_date: dueDate,
                     },
                     {
-                        onSuccess: () => toast.success("Transaksi berhasil!"),
-                        onError: () => {
+                        onSuccess: () => toast.success(isEditMode ? "Transaksi berhasil diperbarui!" : "Transaksi berhasil!"),
+                        onError: (errors) => {
                             setIsSubmitting(false);
-                            toast.error("Gagal menyimpan transaksi");
+                            console.error("Gagal menyimpan transaksi (router." + submitMethod + "):", errors);
+                            const firstError = Object.values(errors || {})[0];
+                            toast.error(
+                                typeof firstError === "string"
+                                    ? firstError
+                                    : "Gagal menyimpan transaksi",
+                            );
                         },
                     },
                 );
             }
         } catch (err) {
             setIsSubmitting(false);
-            toast.error("Gagal menyimpan transaksi");
+            console.error("Gagal menyimpan transaksi (axios):", err);
+            const serverMessage =
+                err?.response?.data?.message ||
+                err?.response?.data?.errors?.message ||
+                (typeof err?.response?.data === "string" ? err.response.data : null);
+            toast.error(
+                serverMessage
+                    ? `Gagal menyimpan transaksi: ${serverMessage}`
+                    : "Gagal menyimpan transaksi (lihat console browser untuk detail)",
+            );
         }
     };
 
@@ -774,7 +926,23 @@ export default function Index({
 
     return (
         <>
-            <Head title="Transaksi" />
+            <Head title={isEditMode ? `Edit Transaksi ${editingInvoice}` : "Transaksi"} />
+
+            {isEditMode && (
+                <div className="bg-amber-500 text-white text-sm font-medium px-4 py-2 flex items-center justify-between gap-3 flex-wrap">
+                    <span>
+                        ✏️ Sedang mengedit transaksi <strong>{editingInvoice}</strong> — perubahan akan
+                        menggantikan isi transaksi lama ini (bukan bikin transaksi baru).
+                    </span>
+                    <button
+                        type="button"
+                        onClick={() => router.post(route("transactions.cancel-edit"))}
+                        className="underline hover:no-underline flex-shrink-0 bg-transparent border-0 text-white cursor-pointer text-sm"
+                    >
+                        Batalkan edit
+                    </button>
+                </div>
+            )}
 
             <div className="h-[calc(100vh-4rem)] flex flex-col lg:flex-row">
                 {/* Mobile Tab Switcher */}
@@ -853,6 +1021,7 @@ export default function Index({
                             error={errors?.customer_id}
                             label="Pelanggan"
                             tierOptions={loyaltyTierOptions}
+                            memberRegistrationEnabled={memberRegistrationEnabled}
                         />
                     </div>
 
@@ -921,10 +1090,23 @@ export default function Index({
                                             const pricingRule =
                                                 pricingItem?.promo;
 
+                                            const itemManualDiscountAmount =
+                                                Number(
+                                                    pricingPreview?.summary
+                                                        ?.item_manual_discount_by_cart_id?.[
+                                                        item.id
+                                                    ] ?? 0,
+                                                );
+                                            const draftDiscount =
+                                                itemDiscounts[item.id];
+
                                             return (
                                                 <div
                                                     key={item.id}
-                                                    className="flex items-center gap-2 p-2 rounded-lg bg-slate-50 dark:bg-slate-800/50 group"
+                                                    className="rounded-lg bg-slate-50 dark:bg-slate-800/50 group"
+                                                >
+                                                <div
+                                                    className="flex items-center gap-2 p-2"
                                                 >
                                                     <div className="w-10 h-10 rounded-lg bg-slate-200 dark:bg-slate-700 overflow-hidden flex-shrink-0">
                                                         {item.product?.image ? (
@@ -981,6 +1163,15 @@ export default function Index({
                                                                     }
                                                                 </p>
                                                             )}
+                                                            {itemManualDiscountAmount >
+                                                                0 && (
+                                                                <p className="mt-0.5 text-[11px] font-medium text-emerald-600 dark:text-emerald-400">
+                                                                    Diskon item -
+                                                                    {formatPrice(
+                                                                        itemManualDiscountAmount,
+                                                                    )}
+                                                                </p>
+                                                            )}
                                                         </div>
                                                     </div>
                                                     <div className="flex items-center gap-1">
@@ -1019,6 +1210,28 @@ export default function Index({
                                                         </button>
                                                         <button
                                                             onClick={() =>
+                                                                setOpenItemDiscountCartId(
+                                                                    openItemDiscountCartId ===
+                                                                        item.id
+                                                                        ? null
+                                                                        : item.id,
+                                                                )
+                                                            }
+                                                            className={`w-6 h-6 rounded flex items-center justify-center ml-1 ${
+                                                                itemDiscounts[
+                                                                    item.id
+                                                                ]?.value
+                                                                    ? "text-emerald-600 bg-emerald-50 dark:bg-emerald-950/40"
+                                                                    : "text-slate-400 hover:text-primary-500 hover:bg-primary-50 dark:hover:bg-primary-950/50"
+                                                            }`}
+                                                            title="Diskon khusus barang ini"
+                                                        >
+                                                            <IconTag
+                                                                size={12}
+                                                            />
+                                                        </button>
+                                                        <button
+                                                            onClick={() =>
                                                                 handleRemoveFromCart(
                                                                     item.id,
                                                                 )
@@ -1035,6 +1248,79 @@ export default function Index({
                                                             effectiveLineTotal,
                                                         )}
                                                     </p>
+                                                </div>
+                                                {openItemDiscountCartId ===
+                                                    item.id && (
+                                                    <div className="flex items-center gap-2 px-2 pb-2">
+                                                        <div className="inline-flex rounded-lg border border-slate-200 dark:border-slate-700 overflow-hidden text-[11px]">
+                                                            <button
+                                                                onClick={() =>
+                                                                    setItemDiscountMode(
+                                                                        item.id,
+                                                                        "nominal",
+                                                                    )
+                                                                }
+                                                                className={`px-2 py-1 ${
+                                                                    (draftDiscount?.mode ??
+                                                                        "nominal") ===
+                                                                    "nominal"
+                                                                        ? "bg-primary-600 text-white"
+                                                                        : "bg-white dark:bg-slate-800 text-slate-500"
+                                                                }`}
+                                                            >
+                                                                Rp
+                                                            </button>
+                                                            <button
+                                                                onClick={() =>
+                                                                    setItemDiscountMode(
+                                                                        item.id,
+                                                                        "percent",
+                                                                    )
+                                                                }
+                                                                className={`px-2 py-1 ${
+                                                                    draftDiscount?.mode ===
+                                                                    "percent"
+                                                                        ? "bg-primary-600 text-white"
+                                                                        : "bg-white dark:bg-slate-800 text-slate-500"
+                                                                }`}
+                                                            >
+                                                                %
+                                                            </button>
+                                                        </div>
+                                                        <input
+                                                            type="number"
+                                                            min="0"
+                                                            value={
+                                                                draftDiscount?.value ??
+                                                                ""
+                                                            }
+                                                            onChange={(e) =>
+                                                                setItemDiscountValue(
+                                                                    item.id,
+                                                                    e.target
+                                                                        .value,
+                                                                )
+                                                            }
+                                                            placeholder={
+                                                                draftDiscount?.mode ===
+                                                                "percent"
+                                                                    ? "cth. 10"
+                                                                    : "cth. 5000"
+                                                            }
+                                                            className="flex-1 min-w-0 text-xs rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-2 py-1"
+                                                        />
+                                                        <button
+                                                            onClick={() =>
+                                                                clearItemDiscount(
+                                                                    item.id,
+                                                                )
+                                                            }
+                                                            className="text-[11px] text-slate-400 hover:text-danger-500 px-1"
+                                                        >
+                                                            Hapus
+                                                        </button>
+                                                    </div>
+                                                )}
                                                 </div>
                                             );
                                         })(),
@@ -1490,10 +1776,16 @@ export default function Index({
                                         </button>
 
                                         {(pricingPreview?.eligible_vouchers || []).map((v) => {
-                                            const isSelected = selectedVoucherIds.includes(String(v.id));
+                                            const voucherIdStr = String(v.id);
+                                            const isSelected = selectedVoucherIds.includes(voucherIdStr);
                                             const isPersonal = (v.voucher_type ?? "personal") === "personal";
                                             const isBogo = v.discount_kind === "buy_x_get_y";
                                             const isQtyBreak = v.discount_kind === "qty_break";
+                                            // Counter +/- (pemakaian berkali-kali dalam 1 transaksi)
+                                            // cuma masuk akal buat diskon standar (persen/nominal) —
+                                            // BOGO & grosir bertingkat tetap on/off biasa.
+                                            const supportsMultiWin = !isBogo && !isQtyBreak;
+                                            const winCount = voucherCounts[voucherIdStr] || 0;
                                             const typeBadge = isPersonal
                                                 ? { label: "Personal", cls: "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400" }
                                                 : v.voucher_type === "member_only"
@@ -1527,22 +1819,29 @@ export default function Index({
                                             const toggleVoucher = () =>
                                                 setSelectedVoucherIds((prev) =>
                                                     isSelected
-                                                        ? prev.filter((id) => id !== String(v.id))
-                                                        : [...prev, String(v.id)],
+                                                        ? prev.filter((id) => id !== voucherIdStr)
+                                                        : [...prev, voucherIdStr],
                                                 );
 
+                                            // Mode "Total Transaksi" (bukan per barang) — dipakai buat
+                                            // nampilin keterangan singkat di kartu, biar kasir ngerti
+                                            // kenapa diskonnya nggak nempel ke barang tertentu.
+                                            const isTotalTransactionScope = v.discount_scope === "total_transaction";
+
                                             return (
-                                                <button
+                                                <div
                                                     key={v.id}
-                                                    type="button"
-                                                    onClick={toggleVoucher}
-                                                    className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl border-2 transition-all text-left ${
+                                                    className={`w-full flex items-center justify-between gap-2 px-3 py-2.5 rounded-xl border-2 transition-all text-left ${
                                                         isSelected
                                                             ? "border-primary-500 bg-primary-50 dark:bg-primary-950/30"
                                                             : "border-slate-200 dark:border-slate-700 hover:border-primary-300 dark:hover:border-primary-800"
                                                     }`}
                                                 >
-                                                    <div className="flex items-center gap-2 min-w-0">
+                                                    <button
+                                                        type="button"
+                                                        onClick={toggleVoucher}
+                                                        className="flex items-center gap-2 min-w-0 flex-1 text-left"
+                                                    >
                                                         <div
                                                             className={`w-5 h-5 shrink-0 rounded-md border-2 flex items-center justify-center ${
                                                                 isSelected
@@ -1574,12 +1873,47 @@ export default function Index({
                                                                 {v.minimum_order > 0 && ` · min Rp${Number(v.minimum_order).toLocaleString("id-ID")}`}
                                                                 {v.ends_at && ` · s/d ${new Date(v.ends_at).toLocaleDateString("id-ID")}`}
                                                             </p>
+                                                            {isSelected && supportsMultiWin && winCount > 1 && (
+                                                                <p className="text-xs font-semibold text-primary-600 dark:text-primary-400 mt-0.5">
+                                                                    {discountLabel} × {winCount}
+                                                                    {isTotalTransactionScope ? " (total transaksi)" : ""}
+                                                                </p>
+                                                            )}
                                                         </div>
-                                                    </div>
-                                                    <span className={`text-xs font-bold shrink-0 ml-2 text-right ${isSelected ? "text-primary-600 dark:text-primary-400" : "text-emerald-600 dark:text-emerald-400"}`}>
-                                                        {discountLabel}
-                                                    </span>
-                                                </button>
+                                                    </button>
+
+                                                    {supportsMultiWin ? (
+                                                        <div className="flex items-center gap-1.5 shrink-0">
+                                                            {isSelected && (
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={() => decrementVoucher(v.id)}
+                                                                    className="w-7 h-7 flex items-center justify-center rounded-lg border border-slate-300 dark:border-slate-600 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800"
+                                                                    aria-label={`Kurangi pemakaian ${v.name}`}
+                                                                >
+                                                                    <IconMinus size={14} />
+                                                                </button>
+                                                            )}
+                                                            {isSelected && (
+                                                                <span className="w-5 text-center text-sm font-semibold text-slate-700 dark:text-slate-200">
+                                                                    {winCount}
+                                                                </span>
+                                                            )}
+                                                            <button
+                                                                type="button"
+                                                                onClick={() => incrementVoucher(v.id)}
+                                                                className="w-7 h-7 flex items-center justify-center rounded-lg border border-primary-300 dark:border-primary-700 text-primary-600 dark:text-primary-400 hover:bg-primary-50 dark:hover:bg-primary-950/30"
+                                                                aria-label={`Tambah pemakaian ${v.name}`}
+                                                            >
+                                                                <IconPlus size={14} />
+                                                            </button>
+                                                        </div>
+                                                    ) : (
+                                                        <span className={`text-xs font-bold shrink-0 ml-2 text-right ${isSelected ? "text-primary-600 dark:text-primary-400" : "text-emerald-600 dark:text-emerald-400"}`}>
+                                                            {discountLabel}
+                                                        </span>
+                                                    )}
+                                                </div>
                                             );
                                         })}
                                     </div>
@@ -1587,29 +1921,87 @@ export default function Index({
                             )}
 
                             <div>
-                                <label className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-2">
-                                    Diskon Manual (Rp)
-                                </label>
-                                <div className="relative">
-                                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm">
-                                        Rp
-                                    </span>
-                                    <input
-                                        type="text"
-                                        inputMode="numeric"
-                                        value={discountInput}
-                                        onChange={(e) =>
-                                            setDiscountInput(
-                                                e.target.value.replace(
-                                                    /[^\d]/g,
-                                                    "",
-                                                ),
-                                            )
-                                        }
-                                        placeholder="0"
-                                        className="w-full h-10 pl-10 pr-4 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500"
-                                    />
+                                <div className="flex items-center justify-between mb-2">
+                                    <label className="block text-xs font-medium text-slate-600 dark:text-slate-400">
+                                        Diskon Manual
+                                    </label>
+                                    <div className="inline-flex rounded-lg border border-slate-200 dark:border-slate-700 overflow-hidden text-xs">
+                                        <button
+                                            type="button"
+                                            onClick={() => setDiscountMode("nominal")}
+                                            className={`px-2.5 py-1 font-medium transition-colors ${
+                                                discountMode === "nominal"
+                                                    ? "bg-primary-500 text-white"
+                                                    : "bg-white dark:bg-slate-900 text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800"
+                                            }`}
+                                        >
+                                            Rp
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={() => setDiscountMode("percent")}
+                                            className={`px-2.5 py-1 font-medium transition-colors border-l border-slate-200 dark:border-slate-700 ${
+                                                discountMode === "percent"
+                                                    ? "bg-primary-500 text-white"
+                                                    : "bg-white dark:bg-slate-900 text-slate-500 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800"
+                                            }`}
+                                        >
+                                            %
+                                        </button>
+                                    </div>
                                 </div>
+                                {discountMode === "percent" ? (
+                                    <>
+                                        <div className="relative">
+                                            <input
+                                                type="text"
+                                                inputMode="numeric"
+                                                value={discountPercentInput}
+                                                onChange={(e) => {
+                                                    const raw = e.target.value.replace(/[^\d]/g, "").slice(0, 3);
+                                                    const clamped = raw === "" ? "" : String(Math.min(100, Number(raw)));
+                                                    setDiscountPercentInput(clamped);
+                                                }}
+                                                placeholder="0"
+                                                className="w-full h-10 pl-4 pr-8 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500"
+                                            />
+                                            <span className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm">
+                                                %
+                                            </span>
+                                        </div>
+                                        {discount > 0 && (
+                                            <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                                                = {formatPrice(discount)}
+                                            </p>
+                                        )}
+                                    </>
+                                ) : (
+                                    <div className="relative">
+                                        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm">
+                                            Rp
+                                        </span>
+                                        <input
+                                            type="text"
+                                            inputMode="numeric"
+                                            value={discountInput}
+                                            onChange={(e) =>
+                                                setDiscountInput(
+                                                    e.target.value.replace(
+                                                        /[^\d]/g,
+                                                        "",
+                                                    ),
+                                                )
+                                            }
+                                            placeholder="0"
+                                            className="w-full h-10 pl-10 pr-4 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500"
+                                        />
+                                        {Number(discountInput) > manualDiscountBase && manualDiscountBase > 0 && (
+                                            <p className="mt-1 text-xs text-warning-600 dark:text-warning-400">
+                                                Melebihi sisa belanja (setelah voucher) — dipakai maks {formatPrice(manualDiscountBase)}
+                                            </p>
+                                        )}
+                                    </div>
+                                )}
                             </div>
 
                             {/* Shipping Cost Input */}
@@ -1742,6 +2134,16 @@ export default function Index({
                                 <span className="text-slate-500">Voucher</span>
                                 <span className="text-primary-600">
                                     -{formatPrice(voucherDiscount)}
+                                </span>
+                            </div>
+                        )}
+                        {itemManualDiscount > 0 && (
+                            <div className="flex justify-between items-center mb-2 text-sm">
+                                <span className="text-slate-500">
+                                    Diskon Item
+                                </span>
+                                <span className="text-primary-600">
+                                    -{formatPrice(itemManualDiscount)}
                                 </span>
                             </div>
                         )}

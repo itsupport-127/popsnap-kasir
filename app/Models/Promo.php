@@ -39,6 +39,17 @@ class Promo extends Model
 
     public const SCOPE_MEMBER = 'member'; // khusus loyalty member
 
+    // Mode batas pemakaian voucher manual per pelanggan
+    public const USAGE_LIMIT_PER_TRANSACTION = 'per_transaction'; // default, boleh berkali-kali
+
+    public const USAGE_LIMIT_PER_CUSTOMER = 'per_customer'; // 1x seumur hidup per pelanggan
+
+    // Cakupan diskon (untuk standard_discount) — lihat migration
+    // add_discount_scope_to_promos_table untuk penjelasan lengkap.
+    public const DISCOUNT_SCOPE_PER_ITEM = 'per_item';
+
+    public const DISCOUNT_SCOPE_TOTAL_TRANSACTION = 'total_transaction';
+
     // Tipe nilai diskon (untuk standard_discount & qty_break)
     public const TYPE_PERCENTAGE = 'percentage';
 
@@ -56,10 +67,15 @@ class Promo extends Model
         'discount_kind',
         'discount_type',
         'discount_value',
+        'applies_to_qty',
+        'discount_scope',
+        'allow_zero_price',
+        'usage_limit_mode',
         'target_type',
         'product_id',
         'category_id',
         'customer_scope',
+        'payment_method_restriction',
         'eligible_loyalty_tiers',
         'customer_id',
         'max_uses',
@@ -91,6 +107,9 @@ class Promo extends Model
         'used_at' => 'datetime',
         'used_transaction_id' => 'integer',
         'discount_value' => 'float',
+        'applies_to_qty' => 'integer',
+        'discount_scope' => 'string',
+        'allow_zero_price' => 'boolean',
         'minimum_order' => 'integer',
         'buy_qty' => 'integer',
         'get_qty' => 'integer',
@@ -170,6 +189,16 @@ class Promo extends Model
         return $this->discount_kind === self::KIND_BUY_X_GET_Y;
     }
 
+    /**
+     * true kalau diskon dihitung sekaligus dari sisa subtotal barang yang
+     * eligible (1x per pemakaian kode), bukan nempel per barang satu-satu.
+     * Default 'per_item' kalau kolomnya kosong/null (jaga-jaga data lama).
+     */
+    public function isTotalTransactionScope(): bool
+    {
+        return ($this->discount_scope ?? self::DISCOUNT_SCOPE_PER_ITEM) === self::DISCOUNT_SCOPE_TOTAL_TRANSACTION;
+    }
+
     public function isPersonal(): bool
     {
         return $this->isManual() && $this->customer_id !== null;
@@ -221,6 +250,34 @@ class Promo extends Model
             self::SCOPE_REGISTERED => (bool) $customer,
             self::SCOPE_MEMBER => $isMember && (empty($tiers) || in_array($customer?->loyalty_tier, $tiers, true)),
             default => false,
+        };
+    }
+
+    /**
+     * Cek kecocokan metode bayar untuk promo ini. NULL = tidak dibatasi,
+     * berlaku untuk semua metode bayar. "cash" dianggap satu-satunya metode
+     * tunai murni — semua yang lain (QRIS, transfer, dual, dst) dianggap
+     * cashless.
+     */
+    public function matchesPaymentMethod(?string $paymentMethod): bool
+    {
+        if (empty($this->payment_method_restriction)) {
+            return true;
+        }
+
+        // Kalau metode bayar belum dipilih kasir (misal masih preview awal),
+        // jangan langsung nolak — biar promo tetap kelihatan di daftar, baru
+        // ditolak beneran begitu payment_method sudah pasti dipilih.
+        if ($paymentMethod === null) {
+            return true;
+        }
+
+        $isCash = $paymentMethod === 'cash';
+
+        return match ($this->payment_method_restriction) {
+            'cashless_only' => ! $isCash,
+            'cash_only' => $isCash,
+            default => true,
         };
     }
 

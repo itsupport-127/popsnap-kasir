@@ -4,6 +4,7 @@ import DashboardLayout from "@/Layouts/DashboardLayout";
 import Button from "@/Components/Dashboard/Button";
 import Table from "@/Components/Dashboard/Table";
 import Pagination from "@/Components/Dashboard/Pagination";
+import TransactionItemsModal from "@/Components/Dashboard/TransactionItemsModal";
 import { useAuthorization } from "@/Utils/authorization";
 import {
     IconDatabaseOff,
@@ -18,12 +19,21 @@ import {
     IconBuildingBank,
     IconAlertCircle,
     IconBrandWhatsapp,
+    IconCircleCheck,
+    IconClock,
+    IconCircleX,
+    IconClockX,
+    IconCircleDot,
+    IconCircleHalf2,
+    IconEdit,
+    IconTrash,
 } from "@tabler/icons-react";
 
 const defaultFilters = {
     invoice: "",
     start_date: "",
     end_date: "",
+    category_id: "",
 };
 
 const formatCurrency = (value = 0) =>
@@ -33,11 +43,32 @@ const formatCurrency = (value = 0) =>
         minimumFractionDigits: 0,
     }).format(value);
 
-const History = ({ transactions, filters }) => {
+// Label metode bayar buat ditampilin ke siapapun (kasir/staff maupun kalau
+// kepakai di konteks customer) — sengaja generalisir semua gateway QRIS jadi
+// "QRIS" aja, nama teknis kayak "qris_static"/"midtrans" cuma relevan di
+// halaman Setting Payment Gateway (buat bedain provider mana yang lagi aktif).
+const paymentMethodLabel = (method) => {
+    const labels = {
+        cash: "Tunai",
+        bank_transfer: "Transfer Bank",
+        qris_static: "QRIS",
+        doku: "QRIS",
+        flip: "QRIS",
+        midtrans: "QRIS",
+        xendit: "QRIS",
+        pay_later: "Piutang",
+        dual_cash_qris: "Tunai + QRIS",
+    };
+    return labels[method] ?? (method ? method.replace(/_/g, " ") : "-");
+};
+
+const History = ({ transactions, filters, categories = [] }) => {
     const { can } = useAuthorization();
     const canCreateSalesReturn = can("sales-returns-create");
     const canConfirmPayment = can("transactions-confirm-payment");
     const canCreateCrmCampaign = can("crm-campaigns-create");
+    const canEditTransactions = can("transactions-edit");
+    const canDeleteTransactions = can("transactions-delete");
     const [filterData, setFilterData] = useState({
         ...defaultFilters,
         ...filters,
@@ -49,10 +80,39 @@ const History = ({ transactions, filters }) => {
     });
     const [isConfirming, setIsConfirming] = useState(false);
 
+    // Modal detail item
+    const [itemModal, setItemModal] = useState({ open: false, transaction: null });
+
     // Modal ubah status
     const [statusModal, setStatusModal] = useState({ open: false, transaction: null });
     const [isUpdatingStatus, setIsUpdatingStatus] = useState(false);
     const [selectedStatus, setSelectedStatus] = useState("");
+
+    // Modal hapus transaksi (permanen)
+    const [deleteModal, setDeleteModal] = useState({ open: false, transaction: null });
+    const [deleteConfirmInput, setDeleteConfirmInput] = useState("");
+    const [isDeleting, setIsDeleting] = useState(false);
+
+    const openDeleteModal = (transaction) => {
+        setDeleteConfirmInput("");
+        setDeleteModal({ open: true, transaction });
+    };
+
+    const handleDeleteTransaction = () => {
+        if (!deleteModal.transaction) return;
+        if (deleteConfirmInput.trim() !== deleteModal.transaction.invoice) return;
+
+        setIsDeleting(true);
+        router.delete(route("transactions.destroy", deleteModal.transaction.id), {
+            data: { confirm_invoice: deleteConfirmInput.trim() },
+            preserveScroll: true,
+            onSuccess: () => {
+                setDeleteModal({ open: false, transaction: null });
+                setDeleteConfirmInput("");
+            },
+            onFinish: () => setIsDeleting(false),
+        });
+    };
 
     const handleUpdateStatus = () => {
         if (!selectedStatus || !statusModal.transaction) return;
@@ -111,7 +171,7 @@ const History = ({ transactions, filters }) => {
         : rows.length || 1;
 
     const hasActiveFilters =
-        filterData.invoice || filterData.start_date || filterData.end_date;
+        filterData.invoice || filterData.start_date || filterData.end_date || filterData.category_id;
 
     return (
         <>
@@ -161,7 +221,7 @@ const History = ({ transactions, filters }) => {
                 {showFilters && (
                     <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-5 animate-slide-up">
                         <form onSubmit={applyFilters}>
-                            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+                            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-5">
                                 <div>
                                     <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
                                         Nomor Invoice
@@ -178,6 +238,28 @@ const History = ({ transactions, filters }) => {
                                         }
                                         className="w-full h-11 px-4 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-800 dark:text-slate-200 placeholder-slate-400 focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 transition-all"
                                     />
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
+                                        Kategori Produk
+                                    </label>
+                                    <select
+                                        value={filterData.category_id}
+                                        onChange={(e) =>
+                                            handleChange(
+                                                "category_id",
+                                                e.target.value
+                                            )
+                                        }
+                                        className="w-full h-11 px-4 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-800 dark:text-slate-200 focus:ring-2 focus:ring-primary-500/20 focus:border-primary-500 transition-all"
+                                    >
+                                        <option value="">Semua Kategori</option>
+                                        {categories.map((cat) => (
+                                            <option key={cat.id} value={cat.id}>
+                                                {cat.name}
+                                            </option>
+                                        ))}
+                                    </select>
                                 </div>
                                 <div>
                                     <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
@@ -304,14 +386,33 @@ const History = ({ transactions, filters }) => {
                                                 </span>
                                             </td>
                                             <td className="px-4 py-4 text-center">
-                                                <span className="px-2 py-1 text-xs font-medium bg-primary-100 dark:bg-primary-900/50 text-primary-700 dark:text-primary-400 rounded-full">
+                                                <button
+                                                    type="button"
+                                                    onClick={() =>
+                                                        setItemModal({
+                                                            open: true,
+                                                            transaction,
+                                                        })
+                                                    }
+                                                    className="px-2 py-1 text-xs font-medium bg-primary-100 dark:bg-primary-900/50 text-primary-700 dark:text-primary-400 rounded-full hover:bg-primary-200 dark:hover:bg-primary-900 transition-colors cursor-pointer"
+                                                    title="Lihat detail item"
+                                                >
                                                     {transaction.total_items ??
                                                         0}
-                                                </span>
+                                                </button>
                                             </td>
                                             <td className="px-4 py-4 text-right text-sm font-semibold text-slate-900 dark:text-white">
                                                 {formatCurrency(
                                                     transaction.grand_total ?? 0
+                                                )}
+                                                {(Number(transaction.discount ?? 0) +
+                                                    Number(transaction.customer_voucher_discount ?? 0)) > 0 && (
+                                                    <div className="text-xs font-normal text-emerald-600 dark:text-emerald-400">
+                                                        Diskon -{formatCurrency(
+                                                            Number(transaction.discount ?? 0) +
+                                                                Number(transaction.customer_voucher_discount ?? 0)
+                                                        )}
+                                                    </div>
                                                 )}
                                             </td>
                                             <td className="px-4 py-4 text-center">
@@ -321,10 +422,10 @@ const History = ({ transactions, filters }) => {
                                                         cash:         { label: "Tunai",        color: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400" },
                                                         bank_transfer:{ label: "Transfer Bank", color: "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400" },
                                                         qris_static:  { label: "QRIS",          color: "bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-400" },
-                                                        doku:         { label: "DOKU QRIS",     color: "bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-400" },
-                                                        flip:         { label: "Flip.id",       color: "bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-400" },
-                                                        midtrans:     { label: "Midtrans",      color: "bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400" },
-                                                        xendit:       { label: "Xendit",        color: "bg-pink-100 text-pink-700 dark:bg-pink-900/30 dark:text-pink-400" },
+                                                        doku:         { label: "QRIS",          color: "bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-400" },
+                                                        flip:         { label: "QRIS",          color: "bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-400" },
+                                                        midtrans:     { label: "QRIS",          color: "bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-400" },
+                                                        xendit:       { label: "QRIS",          color: "bg-violet-100 text-violet-700 dark:bg-violet-900/30 dark:text-violet-400" },
                                                         pay_later:    { label: "Piutang",       color: "bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400" },
                                                         dual_cash_qris: { label: "Tunai+QRIS",  color: "bg-teal-100 text-teal-700 dark:bg-teal-900/30 dark:text-teal-400" },
                                                     };
@@ -445,6 +546,28 @@ const History = ({ transactions, filters }) => {
                                                     >
                                                         <IconPrinter size={18} />
                                                     </Link>
+                                                    {canEditTransactions && (
+                                                        <Link
+                                                            href={route(
+                                                                "transactions.edit",
+                                                                transaction.id
+                                                            )}
+                                                            className="inline-flex items-center justify-center w-9 h-9 rounded-lg text-amber-600 hover:text-amber-800 bg-amber-50 hover:bg-amber-100 dark:bg-amber-950/30 dark:hover:bg-amber-950/50 transition-colors"
+                                                            title="Edit transaksi"
+                                                        >
+                                                            <IconEdit size={18} />
+                                                        </Link>
+                                                    )}
+                                                    {canDeleteTransactions && (
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => openDeleteModal(transaction)}
+                                                            className="inline-flex items-center justify-center w-9 h-9 rounded-lg text-danger-500 hover:text-danger-700 bg-danger-50 hover:bg-danger-100 dark:bg-danger-950/30 dark:hover:bg-danger-950/50 transition-colors"
+                                                            title="Hapus transaksi (permanen)"
+                                                        >
+                                                            <IconTrash size={18} />
+                                                        </button>
+                                                    )}
                                                 </div>
                                             </td>
                                         </tr>
@@ -514,6 +637,15 @@ const History = ({ transactions, filters }) => {
                                                     transaction.grand_total ?? 0
                                                 )}
                                             </p>
+                                            {(Number(transaction.discount ?? 0) +
+                                                Number(transaction.customer_voucher_discount ?? 0)) > 0 && (
+                                                <p className="text-[11px] text-emerald-600 dark:text-emerald-400">
+                                                    Diskon -{formatCurrency(
+                                                        Number(transaction.discount ?? 0) +
+                                                            Number(transaction.customer_voucher_discount ?? 0)
+                                                    )}
+                                                </p>
+                                            )}
                                         </div>
                                     </div>
 
@@ -540,9 +672,18 @@ const History = ({ transactions, filters }) => {
                                             <p className="text-xs text-slate-500 dark:text-slate-400">
                                                 Item
                                             </p>
-                                            <p className="font-medium">
+                                            <button
+                                                type="button"
+                                                onClick={() =>
+                                                    setItemModal({
+                                                        open: true,
+                                                        transaction,
+                                                    })
+                                                }
+                                                className="font-medium text-primary-600 dark:text-primary-400 underline underline-offset-2"
+                                            >
                                                 {transaction.total_items ?? 0}
-                                            </p>
+                                            </button>
                                         </div>
                                         <div className="text-right">
                                             <p className="text-xs text-slate-500 dark:text-slate-400">
@@ -555,8 +696,8 @@ const History = ({ transactions, filters }) => {
                                                     <p className="text-[10px] text-slate-500">📱 {formatCurrency(transaction.dual_qris ?? 0)}</p>
                                                 </div>
                                             ) : (
-                                                <p className="font-medium capitalize">
-                                                    {transaction.payment_method?.replace("_", " ") ?? "-"}
+                                                <p className="font-medium">
+                                                    {paymentMethodLabel(transaction.payment_method)}
                                                 </p>
                                             )}
                                         </div>
@@ -624,6 +765,28 @@ const History = ({ transactions, filters }) => {
                                         >
                                             Resi
                                         </a>
+                                        {canEditTransactions && (
+                                            <Link
+                                                href={route(
+                                                    "transactions.edit",
+                                                    transaction.id
+                                                )}
+                                                className="inline-flex items-center justify-center gap-1 px-3 py-2 text-xs font-semibold rounded-lg bg-amber-50 text-amber-700 hover:bg-amber-100 dark:bg-amber-950/30 dark:text-amber-400 dark:hover:bg-amber-950/50"
+                                            >
+                                                <IconEdit size={14} />
+                                                Edit
+                                            </Link>
+                                        )}
+                                        {canDeleteTransactions && (
+                                            <button
+                                                type="button"
+                                                onClick={() => openDeleteModal(transaction)}
+                                                className="inline-flex items-center justify-center gap-1 px-3 py-2 text-xs font-semibold rounded-lg bg-danger-50 text-danger-600 hover:bg-danger-100 dark:bg-danger-950/30 dark:text-danger-400 dark:hover:bg-danger-950/50"
+                                            >
+                                                <IconTrash size={14} />
+                                                Hapus
+                                            </button>
+                                        )}
                                     </div>
                                 </div>
                             ))}
@@ -807,6 +970,13 @@ const History = ({ transactions, filters }) => {
                 </div>
             )}
 
+            {/* ===== MODAL DETAIL ITEM ===== */}
+            <TransactionItemsModal
+                open={itemModal.open}
+                transaction={itemModal.transaction}
+                onClose={() => setItemModal({ open: false, transaction: null })}
+            />
+
             {/* ===== MODAL UBAH STATUS ===== */}
             {statusModal.open && statusModal.transaction && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -833,7 +1003,7 @@ const History = ({ transactions, filters }) => {
                                 </div>
                                 <div className="flex justify-between text-sm">
                                     <span className="text-slate-500">Metode</span>
-                                    <span className="font-medium text-slate-800 dark:text-white">{statusModal.transaction.payment_method ?? "-"}</span>
+                                    <span className="font-medium text-slate-800 dark:text-white">{paymentMethodLabel(statusModal.transaction.payment_method)}</span>
                                 </div>
                             </div>
                             <div>
@@ -842,22 +1012,23 @@ const History = ({ transactions, filters }) => {
                                 </label>
                                 <div className="grid grid-cols-2 gap-2">
                                     {[
-                                        { value: "paid",    label: "✅ Lunas",        color: "bg-success-50 border-success-300 text-success-700 dark:bg-success-950/30 dark:border-success-700 dark:text-success-400" },
-                                        { value: "pending", label: "⏳ Pending",       color: "bg-warning-50 border-warning-300 text-warning-700 dark:bg-warning-950/30 dark:border-warning-700 dark:text-warning-400" },
-                                        { value: "failed",  label: "❌ Gagal",         color: "bg-danger-50 border-danger-300 text-danger-700 dark:bg-danger-950/30 dark:border-danger-700 dark:text-danger-400" },
-                                        { value: "expired", label: "🕐 Kedaluwarsa",   color: "bg-slate-50 border-slate-300 text-slate-700 dark:bg-slate-800 dark:border-slate-600 dark:text-slate-400" },
-                                        { value: "unpaid",  label: "🔴 Belum Lunas",   color: "bg-amber-50 border-amber-300 text-amber-700 dark:bg-amber-950/30 dark:border-amber-700 dark:text-amber-400" },
-                                        { value: "partial", label: "🟡 Parsial",       color: "bg-blue-50 border-blue-300 text-blue-700 dark:bg-blue-950/30 dark:border-blue-700 dark:text-blue-400" },
+                                        { value: "paid",    label: "Lunas",        icon: IconCircleCheck, color: "bg-success-50 border-success-300 text-success-700 dark:bg-success-950/30 dark:border-success-700 dark:text-success-400" },
+                                        { value: "pending", label: "Pending",      icon: IconClock,       color: "bg-warning-50 border-warning-300 text-warning-700 dark:bg-warning-950/30 dark:border-warning-700 dark:text-warning-400" },
+                                        { value: "failed",  label: "Gagal",        icon: IconCircleX,     color: "bg-danger-50 border-danger-300 text-danger-700 dark:bg-danger-950/30 dark:border-danger-700 dark:text-danger-400" },
+                                        { value: "expired", label: "Kedaluwarsa",  icon: IconClockX,      color: "bg-slate-50 border-slate-300 text-slate-700 dark:bg-slate-800 dark:border-slate-600 dark:text-slate-400" },
+                                        { value: "unpaid",  label: "Belum Lunas",  icon: IconCircleDot,   color: "bg-amber-50 border-amber-300 text-amber-700 dark:bg-amber-950/30 dark:border-amber-700 dark:text-amber-400" },
+                                        { value: "partial", label: "Parsial",      icon: IconCircleHalf2, color: "bg-blue-50 border-blue-300 text-blue-700 dark:bg-blue-950/30 dark:border-blue-700 dark:text-blue-400" },
                                     ].map((s) => (
                                         <button
                                             key={s.value}
                                             onClick={() => setSelectedStatus(s.value)}
-                                            className={`px-3 py-2.5 rounded-xl border-2 text-xs font-semibold transition-all ${
+                                            className={`flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-xl border-2 text-xs font-semibold transition-all ${
                                                 selectedStatus === s.value
                                                     ? s.color + " ring-2 ring-offset-1 ring-current scale-105"
                                                     : "border-slate-200 dark:border-slate-700 text-slate-500 hover:border-slate-300"
                                             }`}
                                         >
+                                            <s.icon size={16} />
                                             {s.label}
                                         </button>
                                     ))}
@@ -882,6 +1053,75 @@ const History = ({ transactions, filters }) => {
                                     <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
                                 ) : (
                                     <><IconCheck size={16} /> Simpan Status</>
+                                )}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Modal Hapus Transaksi — PERMANEN, minta ketik ulang invoice */}
+            {deleteModal.open && deleteModal.transaction && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+                    <div
+                        className="absolute inset-0 bg-black/50 backdrop-blur-sm"
+                        onClick={() => !isDeleting && setDeleteModal({ open: false, transaction: null })}
+                    />
+                    <div className="relative bg-white dark:bg-slate-900 rounded-2xl shadow-2xl w-full max-w-sm overflow-hidden">
+                        <div className="bg-gradient-to-r from-danger-600 to-danger-700 px-6 py-5 text-white">
+                            <div className="flex items-center gap-2">
+                                <IconTrash size={20} />
+                                <h3 className="text-lg font-bold">Hapus Transaksi Permanen</h3>
+                            </div>
+                            <p className="text-sm opacity-80 mt-1">{deleteModal.transaction.invoice}</p>
+                        </div>
+                        <div className="p-6 space-y-4">
+                            <div className="bg-danger-50 dark:bg-danger-950/30 border border-danger-200 dark:border-danger-800 rounded-xl p-4 space-y-1.5 text-sm text-danger-700 dark:text-danger-300">
+                                <p className="font-semibold">Aksi ini TIDAK BISA dibatalkan.</p>
+                                <p>Transaksi akan hilang selamanya dari riwayat. Stok produk dikembalikan, pemakaian voucher & poin loyalti direset otomatis.</p>
+                                <p>Kalau customer beneran mengembalikan barang, pakai fitur <strong>Retur</strong> — bukan ini.</p>
+                            </div>
+                            <div className="bg-slate-50 dark:bg-slate-800 rounded-xl p-4 space-y-1">
+                                <div className="flex justify-between text-sm">
+                                    <span className="text-slate-500">Pelanggan</span>
+                                    <span className="font-medium text-slate-800 dark:text-white">{deleteModal.transaction.customer?.name ?? "Umum"}</span>
+                                </div>
+                                <div className="flex justify-between text-sm">
+                                    <span className="text-slate-500">Total</span>
+                                    <span className="font-bold text-slate-800 dark:text-white">{formatCurrency(deleteModal.transaction.grand_total ?? 0)}</span>
+                                </div>
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
+                                    Ketik ulang nomor invoice buat konfirmasi:
+                                </label>
+                                <input
+                                    type="text"
+                                    value={deleteConfirmInput}
+                                    onChange={(e) => setDeleteConfirmInput(e.target.value)}
+                                    placeholder={deleteModal.transaction.invoice}
+                                    autoFocus
+                                    className="w-full h-11 px-4 rounded-xl border border-danger-300 dark:border-danger-800 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 focus:ring-2 focus:ring-danger-500/20 focus:border-danger-500"
+                                />
+                            </div>
+                        </div>
+                        <div className="px-6 pb-6 flex gap-3">
+                            <button
+                                onClick={() => setDeleteModal({ open: false, transaction: null })}
+                                disabled={isDeleting}
+                                className="flex-1 px-4 py-3 rounded-xl border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 font-medium hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors disabled:opacity-50"
+                            >
+                                Batal
+                            </button>
+                            <button
+                                onClick={handleDeleteTransaction}
+                                disabled={isDeleting || deleteConfirmInput.trim() !== deleteModal.transaction.invoice}
+                                className="flex-1 px-4 py-3 rounded-xl bg-danger-600 hover:bg-danger-700 text-white font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                            >
+                                {isDeleting ? (
+                                    <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                                ) : (
+                                    <><IconTrash size={16} /> Hapus Permanen</>
                                 )}
                             </button>
                         </div>

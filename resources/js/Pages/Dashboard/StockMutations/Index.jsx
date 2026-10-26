@@ -37,7 +37,7 @@ export default function Index({ stockMutations, products, filters }) {
                     Mutasi Stok
                 </h1>
                 <p className="text-sm text-slate-500 dark:text-slate-400">
-                    Histori perubahan stok dari stock opname dan initial stock produk.
+                    Histori perubahan stok dari penjualan, retur, pembelian, stock opname, dan adjustment manual.
                 </p>
             </div>
 
