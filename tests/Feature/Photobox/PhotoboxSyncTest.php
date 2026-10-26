@@ -15,6 +15,7 @@ class PhotoboxSyncTest extends TestCase
     {
         parent::setUp();
         $this->artisan('migrate', ['--path' => 'database/migrations/2026_10_22_000100_create_photobox_tables.php', '--force' => true]);
+        $this->artisan('migrate', ['--path' => 'database/migrations/2026_10_26_000100_add_soft_delete_and_edit_to_photobox_transactions.php', '--force' => true]);
     }
 
     private function studio(string $name = 'Studio Emma'): array
@@ -65,6 +66,35 @@ class PhotoboxSyncTest extends TestCase
 
         $this->assertSame(1, PhotoboxTransaction::count());
         $this->assertSame('paid', PhotoboxTransaction::first()->status);
+    }
+
+    public function test_deleted_transaction_is_not_counted_and_not_resurrected_by_resync(): void
+    {
+        [, $token] = $this->studio();
+        $this->withToken($token)->postJson('/api/photobox/transactions', ['transactions' => [$this->row()]])->assertOk();
+        [$s, $e] = [now()->startOfDay(), now()->endOfDay()];
+        $this->assertSame(35000, PhotoboxStats::summary($s, $e)['revenue']);
+
+        PhotoboxTransaction::first()->delete();
+        $this->assertSame(0, PhotoboxStats::summary($s, $e)['revenue']);
+
+        // booth mengirim ulang order_no yang sama -> tetap terhapus, tidak dobel
+        $this->withToken($token)->postJson('/api/photobox/transactions', ['transactions' => [$this->row()]])
+            ->assertOk()->assertJsonPath('results.0.kept', 'deleted');
+        $this->assertSame(0, PhotoboxTransaction::count());
+        $this->assertSame(1, PhotoboxTransaction::withTrashed()->count());
+        $this->assertSame(0, PhotoboxStats::summary($s, $e)['revenue']);
+    }
+
+    public function test_manually_edited_transaction_is_not_overwritten_by_resync(): void
+    {
+        [, $token] = $this->studio();
+        $this->withToken($token)->postJson('/api/photobox/transactions', ['transactions' => [$this->row()]])->assertOk();
+        PhotoboxTransaction::first()->forceFill(['amount' => 20000, 'edited_at' => now()])->save();
+
+        $this->withToken($token)->postJson('/api/photobox/transactions', ['transactions' => [$this->row()]])
+            ->assertOk()->assertJsonPath('results.0.kept', 'edited');
+        $this->assertSame(20000, (int) PhotoboxTransaction::first()->amount);
     }
 
     public function test_order_number_cannot_be_taken_over_by_another_studio(): void

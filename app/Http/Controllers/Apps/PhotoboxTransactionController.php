@@ -8,6 +8,7 @@ use App\Models\PhotoboxTransaction;
 use App\Services\PhotoboxStats;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Carbon;
 use Inertia\Inertia;
 use Inertia\Response;
 
@@ -57,6 +58,8 @@ class PhotoboxTransactionController extends Controller
                 'amount' => $t->amount,
                 'status' => $t->status,
                 'paid_at' => $t->paid_at?->toIso8601String(),
+                'paid_at_local' => $t->paid_at?->copy()->setTimezone(config('app.timezone'))->format('Y-m-d\TH:i'),
+                'edited' => (bool) $t->edited_at,
                 'booth_created_at' => $t->booth_created_at?->toIso8601String(),
             ]);
 
@@ -75,10 +78,50 @@ class PhotoboxTransactionController extends Controller
                 'last_seen_at' => $s->last_seen_at?->toIso8601String(),
             ]),
             'canManage' => $canManage,
+            'canEdit' => $request->user()?->can('photobox-edit') ?? false,
+            'canDelete' => $request->user()?->can('photobox-delete') ?? false,
             'apiUrl' => url('/api/photobox'),
             'newToken' => session('photobox_new_token'),
             'newTokenStudio' => session('photobox_new_token_studio'),
         ]);
+    }
+
+    /** Ubah transaksi. Ringkasan & dashboard dihitung dari tabel ini, jadi pendapatan otomatis ikut menyesuaikan. */
+    public function update(Request $request, PhotoboxTransaction $transaction): RedirectResponse
+    {
+        $data = $request->validate([
+            'template_name' => ['nullable', 'string', 'max:255'],
+            'method' => ['required', 'in:qris,voucher,free'],
+            'amount' => ['required', 'integer', 'min:0'],
+            'status' => ['required', 'in:pending,paid,failed,expired,refunded'],
+            'paid_at' => ['nullable', 'date'],
+        ]);
+
+        $tz = config('app.timezone');
+        $paidAt = ! empty($data['paid_at']) ? Carbon::parse($data['paid_at'], $tz) : $transaction->paid_at;
+        if ($data['status'] === 'paid' && ! $paidAt) {
+            $paidAt = now();
+        }
+
+        $transaction->forceFill([
+            'template_name' => $data['template_name'] ?: null,
+            'method' => $data['method'],
+            'amount' => $data['amount'],
+            'status' => $data['status'],
+            'paid_at' => $paidAt,
+            'edited_at' => now(),
+        ])->save();
+
+        return back()->with('success', 'Transaksi '.$transaction->order_no.' diperbarui.');
+    }
+
+    /** Hapus = soft delete: pendapatan berkurang, dan kiriman ulang dari booth tidak akan membuatnya muncul lagi. */
+    public function destroy(PhotoboxTransaction $transaction): RedirectResponse
+    {
+        $orderNo = $transaction->order_no;
+        $transaction->delete();
+
+        return back()->with('success', 'Transaksi '.$orderNo.' dihapus.');
     }
 
     public function storeStudio(Request $request): RedirectResponse

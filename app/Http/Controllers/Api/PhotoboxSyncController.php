@@ -77,9 +77,21 @@ class PhotoboxSyncController extends Controller
                 $paidAt = $createdAt ?? now();
             }
 
-            $existing = PhotoboxTransaction::where('order_no', $d['order_no'])->first();
+            $existing = PhotoboxTransaction::withTrashed()->where('order_no', $d['order_no'])->first();
             if ($existing && $existing->studio_id !== $studio->id) {
                 $results[] = ['order_no' => $d['order_no'], 'ok' => false, 'error' => 'Nomor transaksi sudah dipakai studio lain.'];
+
+                continue;
+            }
+            // Sudah dihapus di kasir: biarkan terhapus (jangan dibuat ulang) supaya pendapatan tidak dobel
+            if ($existing && $existing->trashed()) {
+                $results[] = ['order_no' => $d['order_no'], 'ok' => true, 'kept' => 'deleted'];
+
+                continue;
+            }
+            // Sudah diedit manual di kasir: data kasir yang dipakai, jangan ditimpa kiriman booth
+            if ($existing && $existing->edited_at) {
+                $results[] = ['order_no' => $d['order_no'], 'ok' => true, 'kept' => 'edited'];
 
                 continue;
             }

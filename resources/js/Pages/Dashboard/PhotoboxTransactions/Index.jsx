@@ -3,7 +3,8 @@ import { Head, router, useForm } from "@inertiajs/react";
 import DashboardLayout from "@/Layouts/DashboardLayout";
 import Table from "@/Components/Dashboard/Table";
 import Pagination from "@/Components/Dashboard/Pagination";
-import { IconCamera, IconCopy, IconKey, IconPlus } from "@tabler/icons-react";
+import Swal from "sweetalert2";
+import { IconCamera, IconCopy, IconKey, IconPencil, IconPlus, IconTrash, IconX } from "@tabler/icons-react";
 
 const rupiah = (v = 0) =>
     new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", minimumFractionDigits: 0 }).format(v);
@@ -39,9 +40,42 @@ function Stat({ label, value, sub }) {
     );
 }
 
-export default function Index({ filters, range, transactions, summary, studios, canManage, apiUrl, newToken, newTokenStudio }) {
+export default function Index({ filters, range, transactions, summary, studios, canManage, canEdit, canDelete, apiUrl, newToken, newTokenStudio }) {
     const [showStudios, setShowStudios] = useState(!!newToken || studios.length === 0);
     const form = useForm({ name: "" });
+    const [editing, setEditing] = useState(null);
+    const editForm = useForm({ template_name: "", method: "qris", amount: 0, status: "paid", paid_at: "" });
+    const showActions = canEdit || canDelete;
+
+    const openEdit = (t) => {
+        editForm.clearErrors();
+        editForm.setData({
+            template_name: t.template_name || "",
+            method: t.method,
+            amount: t.amount,
+            status: t.status,
+            paid_at: t.paid_at_local || "",
+        });
+        setEditing(t);
+    };
+    const saveEdit = (e) => {
+        e.preventDefault();
+        editForm.put(route("photobox-transactions.update", editing.id), { preserveScroll: true, onSuccess: () => setEditing(null) });
+    };
+    const removeTx = (t) => {
+        Swal.fire({
+            title: "Hapus transaksi?",
+            html: `<b>${t.order_no}</b><br/>${t.status === "paid" && t.amount > 0 ? `Pendapatan photobox akan berkurang ${rupiah(t.amount)}.` : "Transaksi ini tidak akan dihitung lagi."}`,
+            icon: "warning",
+            showCancelButton: true,
+            confirmButtonColor: "#ef4444",
+            cancelButtonColor: "#64748b",
+            confirmButtonText: "Ya, hapus",
+            cancelButtonText: "Batal",
+        }).then((r) => {
+            if (r.isConfirmed) router.delete(route("photobox-transactions.destroy", t.id), { preserveScroll: true });
+        });
+    };
     const go = (next) => router.get(route("photobox-transactions.index"), { ...filters, ...next }, { preserveState: true, replace: true });
     const copy = (text) => navigator.clipboard?.writeText(text);
 
@@ -166,25 +200,82 @@ export default function Index({ filters, range, transactions, summary, studios, 
                     <Table.Thead>
                         <tr>
                             <Table.Th>No. Transaksi</Table.Th><Table.Th>Waktu</Table.Th><Table.Th>Studio</Table.Th><Table.Th>Produk</Table.Th>
-                            <Table.Th>Metode</Table.Th><Table.Th className="text-right">Jumlah</Table.Th><Table.Th>Status</Table.Th>
+                            <Table.Th>Metode</Table.Th><Table.Th className="text-right">Jumlah</Table.Th><Table.Th>Status</Table.Th>{showActions && <Table.Th className="text-right">Aksi</Table.Th>}
                         </tr>
                     </Table.Thead>
                     <Table.Tbody>
                         {transactions.data.length ? transactions.data.map((t) => (
                             <tr key={t.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/50">
-                                <Table.Td><span className="font-mono text-xs font-semibold">{t.order_no}</span></Table.Td>
+                                <Table.Td><span className="font-mono text-xs font-semibold">{t.order_no}</span>{t.edited && <span className="ml-2 rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-semibold text-sky-700">diedit</span>}</Table.Td>
                                 <Table.Td>{dt(t.paid_at || t.booth_created_at)}</Table.Td>
                                 <Table.Td>{t.studio}</Table.Td>
                                 <Table.Td>{t.template_name || "-"}{t.category ? <span className="block text-xs text-slate-500">{t.category}</span> : null}</Table.Td>
                                 <Table.Td>{METHOD_LABEL[t.method] || t.method}{t.voucher_code ? <span className="block font-mono text-xs text-slate-500">{t.voucher_code}</span> : null}</Table.Td>
                                 <Table.Td className="text-right">{rupiah(t.amount)}</Table.Td>
                                 <Table.Td><span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${STATUS_STYLE[t.status] || ""}`}>{STATUS_LABEL[t.status] || t.status}</span></Table.Td>
+                                {showActions && (
+                                    <Table.Td>
+                                        <div className="flex justify-end gap-2">
+                                            {canEdit && <button type="button" onClick={() => openEdit(t)} title="Edit" className="rounded-lg border border-amber-200 bg-amber-100 p-2 text-amber-600 hover:bg-amber-200 dark:border-amber-800 dark:bg-amber-900/40 dark:text-amber-400"><IconPencil size={16} /></button>}
+                                            {canDelete && <button type="button" onClick={() => removeTx(t)} title="Hapus" className="rounded-lg border border-rose-200 bg-rose-100 p-2 text-rose-600 hover:bg-rose-200 dark:border-rose-800 dark:bg-rose-900/40 dark:text-rose-400"><IconTrash size={16} /></button>}
+                                        </div>
+                                    </Table.Td>
+                                )}
                             </tr>
-                        )) : <Table.Empty colSpan={7} message="Belum ada transaksi pada filter ini." />}
+                        )) : <Table.Empty colSpan={showActions ? 8 : 7} message="Belum ada transaksi pada filter ini." />}
                     </Table.Tbody>
                 </Table>
             </Table.Card>
             {transactions.last_page > 1 && <Pagination links={transactions.links} />}
+
+            {editing && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4" onClick={() => setEditing(null)}>
+                    <form onSubmit={saveEdit} onClick={(e) => e.stopPropagation()} className="w-full max-w-md rounded-2xl bg-white p-5 shadow-xl dark:bg-slate-900">
+                        <div className="mb-4 flex items-start justify-between gap-3">
+                            <div>
+                                <h2 className="text-lg font-bold text-slate-900 dark:text-white">Edit transaksi</h2>
+                                <p className="font-mono text-xs text-slate-500">{editing.order_no} · {editing.studio}</p>
+                            </div>
+                            <button type="button" onClick={() => setEditing(null)} className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"><IconX size={18} /></button>
+                        </div>
+                        <div className="space-y-3">
+                            <label className="block text-sm">
+                                <span className="mb-1 block text-slate-600 dark:text-slate-300">Produk (template/paket)</span>
+                                <input value={editForm.data.template_name} onChange={(e) => editForm.setData("template_name", e.target.value)} className={`${field} w-full`} />
+                                {editForm.errors.template_name && <span className="text-xs text-rose-600">{editForm.errors.template_name}</span>}
+                            </label>
+                            <div className="grid grid-cols-2 gap-3">
+                                <label className="block text-sm">
+                                    <span className="mb-1 block text-slate-600 dark:text-slate-300">Metode</span>
+                                    <select value={editForm.data.method} onChange={(e) => editForm.setData("method", e.target.value)} className={`${field} w-full`}>
+                                        {Object.entries(METHOD_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                                    </select>
+                                </label>
+                                <label className="block text-sm">
+                                    <span className="mb-1 block text-slate-600 dark:text-slate-300">Status</span>
+                                    <select value={editForm.data.status} onChange={(e) => editForm.setData("status", e.target.value)} className={`${field} w-full`}>
+                                        {Object.entries(STATUS_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                                    </select>
+                                </label>
+                            </div>
+                            <label className="block text-sm">
+                                <span className="mb-1 block text-slate-600 dark:text-slate-300">Jumlah (Rp)</span>
+                                <input type="number" min="0" step="1" value={editForm.data.amount} onChange={(e) => editForm.setData("amount", e.target.value)} className={`${field} w-full`} />
+                                {editForm.errors.amount && <span className="text-xs text-rose-600">{editForm.errors.amount}</span>}
+                            </label>
+                            <label className="block text-sm">
+                                <span className="mb-1 block text-slate-600 dark:text-slate-300">Waktu bayar</span>
+                                <input type="datetime-local" value={editForm.data.paid_at} onChange={(e) => editForm.setData("paid_at", e.target.value)} className={`${field} w-full`} />
+                            </label>
+                            <p className="text-xs text-slate-500">Pendapatan hanya dihitung untuk status Lunas. Transaksi yang sudah diedit tidak akan ditimpa lagi oleh kiriman ulang dari app Photobox.</p>
+                        </div>
+                        <div className="mt-5 flex justify-end gap-2">
+                            <button type="button" onClick={() => setEditing(null)} className="rounded-xl border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800">Batal</button>
+                            <button type="submit" disabled={editForm.processing} className="rounded-xl bg-primary-500 px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">{editForm.processing ? "Menyimpan..." : "Simpan"}</button>
+                        </div>
+                    </form>
+                </div>
+            )}
         </>
     );
 }

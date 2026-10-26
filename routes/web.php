@@ -116,6 +116,8 @@ Route::group(['prefix' => 'dashboard', 'middleware' => ['auth', 'verified']], fu
     Route::get('stock-mutations', [StockMutationController::class, 'index'])->middleware('permission:stock-mutations-access')->name('stock-mutations.index');
     // Transaksi Photobox (sinkron dari app booth) + kelola studio/token
     Route::get('photobox-transactions', [PhotoboxTransactionController::class, 'index'])->middleware('permission:photobox-access')->name('photobox-transactions.index');
+    Route::put('photobox-transactions/{transaction}', [PhotoboxTransactionController::class, 'update'])->middleware('permission:photobox-edit')->name('photobox-transactions.update');
+    Route::delete('photobox-transactions/{transaction}', [PhotoboxTransactionController::class, 'destroy'])->middleware('permission:photobox-delete')->name('photobox-transactions.destroy');
     Route::post('photobox-studios', [PhotoboxTransactionController::class, 'storeStudio'])->middleware('permission:photobox-manage')->name('photobox-studios.store');
     Route::post('photobox-studios/{studio}/token', [PhotoboxTransactionController::class, 'regenerateToken'])->middleware('permission:photobox-manage')->name('photobox-studios.token');
     Route::post('photobox-studios/{studio}/toggle', [PhotoboxTransactionController::class, 'toggleStudio'])->middleware('permission:photobox-manage')->name('photobox-studios.toggle');
