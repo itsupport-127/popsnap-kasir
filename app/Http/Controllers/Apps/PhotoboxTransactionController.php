@@ -9,6 +9,7 @@ use App\Services\PhotoboxStats;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
 use Inertia\Inertia;
 use Inertia\Response;
 
@@ -66,6 +67,10 @@ class PhotoboxTransactionController extends Controller
 
         $canManage = $request->user()?->can('photobox-manage') ?? false;
 
+        $studioTx = PhotoboxTransaction::query()
+            ->selectRaw("studio_id, COUNT(*) as count, SUM(CASE WHEN status = 'paid' THEN amount ELSE 0 END) as revenue")
+            ->groupBy('studio_id')->get()->keyBy('studio_id');
+
         return Inertia::render('Dashboard/PhotoboxTransactions/Index', [
             'filters' => $filters,
             'range' => ['start' => $start->toDateString(), 'end' => $end->toDateString()],
@@ -73,6 +78,8 @@ class PhotoboxTransactionController extends Controller
             'summary' => PhotoboxStats::summary($start, $end, $studioId),
             'studios' => PhotoboxStudio::query()->orderBy('name')->get()->map(fn (PhotoboxStudio $s) => [
                 'id' => $s->id,
+                'tx_count' => (int) ($studioTx[$s->id]->count ?? 0),
+                'tx_revenue' => (int) ($studioTx[$s->id]->revenue ?? 0),
                 'name' => $s->name,
                 'is_active' => $s->is_active,
                 'token_hint' => $s->token_hint,
@@ -140,6 +147,35 @@ class PhotoboxTransactionController extends Controller
         $token = $studio->issueToken();
 
         return back()->with(['photobox_new_token' => $token, 'photobox_new_token_studio' => $studio->name]);
+    }
+
+    public function updateStudio(Request $request, PhotoboxStudio $studio): RedirectResponse
+    {
+        $data = $request->validate(['name' => ['required', 'string', 'max:100']]);
+        $studio->update(['name' => trim($data['name'])]);
+
+        return back()->with('success', 'Nama studio diperbarui.');
+    }
+
+    /**
+     * Hapus studio. Studio yang sudah punya transaksi ikut menghapus SEMUA transaksinya (pendapatan berkurang),
+     * jadi harus dikonfirmasi eksplisit (with_transactions) dan butuh izin photobox-delete. Kalau hanya ingin
+     * menghentikan studio, pakai "Nonaktifkan".
+     */
+    public function destroyStudio(Request $request, PhotoboxStudio $studio): RedirectResponse
+    {
+        $count = $studio->transactions()->count(); // transaksi yang masih tampil (yang sudah dihapus ikut terhapus diam-diam)
+        if ($count > 0) {
+            abort_unless($request->user()?->can('photobox-delete'), 403, 'Studio ini punya transaksi; menghapusnya butuh izin hapus transaksi Photobox.');
+            if (! $request->boolean('with_transactions')) {
+                return back()->withErrors(['studio' => 'Studio ini punya '.$count.' transaksi. Konfirmasi penghapusan beserta transaksinya, atau pilih Nonaktifkan.']);
+            }
+        }
+
+        $name = $studio->name;
+        DB::transaction(fn () => $studio->delete()); // transaksi ikut terhapus lewat foreign key cascade
+
+        return back()->with('success', 'Studio '.$name.' dihapus'.($count > 0 ? ' beserta '.$count.' transaksinya.' : '.'));
     }
 
     public function toggleStudio(PhotoboxStudio $studio): RedirectResponse

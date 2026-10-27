@@ -1,11 +1,11 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Head, router, useForm } from "@inertiajs/react";
 import DashboardLayout from "@/Layouts/DashboardLayout";
 import Table from "@/Components/Dashboard/Table";
 import Pagination from "@/Components/Dashboard/Pagination";
 import Swal from "sweetalert2";
 import toast from "react-hot-toast";
-import { IconBrandWhatsapp, IconCamera, IconCopy, IconExternalLink, IconKey, IconPencil, IconPlus, IconTrash, IconX } from "@tabler/icons-react";
+import { IconBrandWhatsapp, IconCamera, IconChevronDown, IconCopy, IconExternalLink, IconKey, IconPencil, IconPlus, IconSearch, IconTrash, IconX } from "@tabler/icons-react";
 
 const rupiah = (v = 0) =>
     new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", minimumFractionDigits: 0 }).format(v);
@@ -60,6 +60,50 @@ export default function Index({ filters, range, transactions, summary, studios, 
     const [editing, setEditing] = useState(null);
     const editForm = useForm({ template_name: "", method: "qris", amount: 0, status: "paid", paid_at: "" });
     const showActions = canEdit || canDelete;
+    const [searchText, setSearchText] = useState(filters.search || "");
+    useEffect(() => { setSearchText(filters.search || ""); }, [filters.search]); // ikut berubah kalau halaman dibuka dengan pencarian dari link lain
+    const hasFilters = !!(filters.studio_id || filters.method || filters.status || filters.search);
+    const resetFilters = () => { setSearchText(""); go({ studio_id: "", method: "", status: "", search: "" }); };
+
+    const renameStudio = (s) => {
+        Swal.fire({
+            title: "Ubah nama studio",
+            input: "text",
+            inputValue: s.name,
+            inputAttributes: { maxlength: 100 },
+            showCancelButton: true,
+            confirmButtonText: "Simpan",
+            cancelButtonText: "Batal",
+            inputValidator: (v) => (!v || !v.trim() ? "Nama studio wajib diisi" : undefined),
+        }).then((r) => {
+            if (r.isConfirmed && r.value.trim() !== s.name) {
+                router.put(route("photobox-studios.update", s.id), { name: r.value.trim() }, { preserveScroll: true, onSuccess: () => toast.success("Nama studio diperbarui") });
+            }
+        });
+    };
+    const deleteStudio = (s) => {
+        const hasTx = s.tx_count > 0;
+        Swal.fire({
+            title: `Hapus studio ${s.name}?`,
+            html: hasTx
+                ? `Studio ini punya <b>${s.tx_count} transaksi</b> (pendapatan lunas ${rupiah(s.tx_revenue)}).<br/>Menghapus studio akan <b>menghapus semua transaksinya</b> dan pendapatannya berkurang. Kalau hanya ingin menghentikan, pilih <b>Nonaktifkan</b>.`
+                : "Studio ini belum punya transaksi. Token-nya langsung tidak berlaku.",
+            icon: "warning",
+            showCancelButton: true,
+            confirmButtonColor: "#ef4444",
+            cancelButtonColor: "#64748b",
+            confirmButtonText: hasTx ? "Hapus studio & transaksinya" : "Ya, hapus",
+            cancelButtonText: "Batal",
+        }).then((r) => {
+            if (!r.isConfirmed) return;
+            router.delete(route("photobox-studios.destroy", s.id), {
+                data: { with_transactions: hasTx },
+                preserveScroll: true,
+                onSuccess: () => toast.success("Studio dihapus"),
+                onError: (e) => Swal.fire("Gagal menghapus", Object.values(e)[0] || "Terjadi kesalahan", "error"),
+            });
+        });
+    };
 
     const openEdit = (t) => {
         editForm.clearErrors();
@@ -135,6 +179,8 @@ export default function Index({ filters, range, transactions, summary, studios, 
                                     <div className="flex gap-2">
                                         <button type="button" onClick={() => confirm(`Buat token baru untuk ${s.name}? Token lama langsung tidak berlaku.`) && router.post(route("photobox-studios.token", s.id))} className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs dark:border-slate-700">Token baru</button>
                                         <button type="button" onClick={() => router.post(route("photobox-studios.toggle", s.id))} className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs dark:border-slate-700">{s.is_active ? "Nonaktifkan" : "Aktifkan"}</button>
+                                        <button type="button" onClick={() => renameStudio(s)} className="inline-flex items-center gap-1 rounded-lg border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs text-amber-700 hover:bg-amber-100 dark:border-amber-800 dark:bg-amber-900/30 dark:text-amber-400"><IconPencil size={14} /> Ubah nama</button>
+                                        <button type="button" onClick={() => deleteStudio(s)} className="inline-flex items-center gap-1 rounded-lg border border-rose-200 bg-rose-50 px-3 py-1.5 text-xs text-rose-700 hover:bg-rose-100 dark:border-rose-800 dark:bg-rose-900/30 dark:text-rose-400"><IconTrash size={14} /> Hapus</button>
                                     </div>
                                 )}
                             </div>
@@ -150,29 +196,74 @@ export default function Index({ filters, range, transactions, summary, studios, 
                 </div>
             )}
 
-            <div className="mb-4 flex flex-wrap items-center gap-2 rounded-2xl border border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-slate-900">
-                {PERIODS.map(([id, label]) => (
-                    <button key={id} type="button" onClick={() => go({ period: id })} className={`rounded-xl px-3 py-2 text-sm font-medium ${filters.period === id ? "bg-primary-500 text-white" : "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200"}`}>{label}</button>
-                ))}
-                {filters.period === "custom" && (
-                    <>
-                        <input type="date" value={filters.start_date || ""} onChange={(e) => go({ start_date: e.target.value })} className={field} />
-                        <input type="date" value={filters.end_date || ""} onChange={(e) => go({ end_date: e.target.value })} className={field} />
-                    </>
+            <div className="mb-4 space-y-4 rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
+                {/* Periode */}
+                <div className="flex flex-wrap items-end justify-between gap-3">
+                    <div className="min-w-0 max-w-full">
+                        <span className="mb-1 block text-xs font-medium text-slate-500 dark:text-slate-400">Periode</span>
+                        <div className="flex max-w-full gap-1 overflow-x-auto rounded-xl bg-slate-100 p-1 dark:bg-slate-800">
+                            {PERIODS.map(([id, label]) => (
+                                <button key={id} type="button" onClick={() => go({ period: id })}
+                                    className={`whitespace-nowrap rounded-lg px-3 py-1.5 text-sm font-medium transition-colors ${filters.period === id ? "bg-primary-500 text-white shadow-sm" : "text-slate-600 hover:bg-white dark:text-slate-300 dark:hover:bg-slate-700"}`}>
+                                    {label}
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+                    {filters.period === "custom" && (
+                        <div className="grid w-full grid-cols-2 gap-3 sm:w-auto">
+                            <label className="block">
+                                <span className="mb-1 block text-xs font-medium text-slate-500 dark:text-slate-400">Dari tanggal</span>
+                                <input type="date" value={filters.start_date || ""} onChange={(e) => go({ start_date: e.target.value })} className={`${field} w-full`} />
+                            </label>
+                            <label className="block">
+                                <span className="mb-1 block text-xs font-medium text-slate-500 dark:text-slate-400">Sampai tanggal</span>
+                                <input type="date" value={filters.end_date || ""} onChange={(e) => go({ end_date: e.target.value })} className={`${field} w-full`} />
+                            </label>
+                        </div>
+                    )}
+                </div>
+
+                {/* Filter */}
+                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                    {[
+                        ["Studio", "studio_id", "Semua studio", studios.map((s) => [s.id, s.name])],
+                        ["Metode bayar", "method", "Semua metode", Object.entries(METHOD_LABEL)],
+                        ["Status", "status", "Semua status", Object.entries(STATUS_LABEL)],
+                    ].map(([label, key, allLabel, options]) => (
+                        <label key={key} className="block">
+                            <span className="mb-1 block text-xs font-medium text-slate-500 dark:text-slate-400">{label}</span>
+                            <div className="relative">
+                                <select value={filters[key] || ""} onChange={(e) => go({ [key]: e.target.value })}
+                                    className={`${field} w-full cursor-pointer appearance-none pr-9 ${filters[key] ? "!border-primary-500 !bg-primary-50 font-medium !text-primary-700 dark:!bg-primary-950/30 dark:!text-primary-300" : ""}`}>
+                                    <option value="">{allLabel}</option>
+                                    {options.map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+                                </select>
+                                <IconChevronDown size={16} className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                            </div>
+                        </label>
+                    ))}
+                    <form className="block" onSubmit={(e) => { e.preventDefault(); go({ search: searchText.trim() }); }}>
+                        <span className="mb-1 block text-xs font-medium text-slate-500 dark:text-slate-400">Cari</span>
+                        <div className="relative">
+                            <IconSearch size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                            <input value={searchText} onChange={(e) => setSearchText(e.target.value)} placeholder="Nomor / voucher / template"
+                                className={`${field} w-full pl-9 ${searchText ? "pr-16" : "pr-3"}`} />
+                            {searchText && (
+                                <button type="button" aria-label="Hapus pencarian" onClick={() => { setSearchText(""); if (filters.search) go({ search: "" }); }}
+                                    className="absolute right-9 top-1/2 -translate-y-1/2 rounded p-1 text-slate-400 hover:text-slate-600"><IconX size={14} /></button>
+                            )}
+                            <button type="submit" aria-label="Cari" className="absolute right-1.5 top-1/2 -translate-y-1/2 rounded-lg bg-primary-500 p-1.5 text-white"><IconSearch size={14} /></button>
+                        </div>
+                    </form>
+                </div>
+
+                {hasFilters && (
+                    <div className="flex items-center justify-between gap-3 border-t border-slate-100 pt-3 text-xs dark:border-slate-800">
+                        <span className="text-slate-500 dark:text-slate-400">Filter aktif — hasil di bawah sudah disaring.</span>
+                        <button type="button" onClick={resetFilters} className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-3 py-1.5 font-medium text-slate-600 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"><IconX size={14} /> Reset filter</button>
+                    </div>
                 )}
-                <select value={filters.studio_id || ""} onChange={(e) => go({ studio_id: e.target.value })} className={field}>
-                    <option value="">Semua studio</option>
-                    {studios.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-                </select>
-                <select value={filters.method || ""} onChange={(e) => go({ method: e.target.value })} className={field}>
-                    <option value="">Semua metode</option>
-                    {Object.entries(METHOD_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-                </select>
-                <select value={filters.status || ""} onChange={(e) => go({ status: e.target.value })} className={field}>
-                    <option value="">Semua status</option>
-                    {Object.entries(STATUS_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-                </select>
-                <input defaultValue={filters.search || ""} onKeyDown={(e) => e.key === "Enter" && go({ search: e.target.value })} placeholder="Cari nomor / voucher / template (Enter)" className={`${field} min-w-[16rem] flex-1`} />
             </div>
             <p className="mb-3 text-xs text-slate-500">Periode: {range.start} s/d {range.end}</p>
 
