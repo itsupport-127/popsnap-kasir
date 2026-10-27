@@ -16,6 +16,7 @@ class PhotoboxSyncTest extends TestCase
         parent::setUp();
         $this->artisan('migrate', ['--path' => 'database/migrations/2026_10_22_000100_create_photobox_tables.php', '--force' => true]);
         $this->artisan('migrate', ['--path' => 'database/migrations/2026_10_26_000100_add_soft_delete_and_edit_to_photobox_transactions.php', '--force' => true]);
+        $this->artisan('migrate', ['--path' => 'database/migrations/2026_10_27_000100_add_gallery_url_to_photobox_transactions.php', '--force' => true]);
     }
 
     private function studio(string $name = 'Studio Emma'): array
@@ -84,6 +85,34 @@ class PhotoboxSyncTest extends TestCase
         $this->assertSame(0, PhotoboxTransaction::count());
         $this->assertSame(1, PhotoboxTransaction::withTrashed()->count());
         $this->assertSame(0, PhotoboxStats::summary($s, $e)['revenue']);
+    }
+
+    public function test_gallery_url_is_stored_kept_and_refreshed_even_after_edit(): void
+    {
+        [, $token] = $this->studio();
+        $url = 'https://foto.example.com/s/K7M29QXH4B';
+        $this->withToken($token)->postJson('/api/photobox/transactions', ['transactions' => [$this->row(['gallery_url' => $url])]])->assertOk();
+        $this->assertSame($url, PhotoboxTransaction::first()->gallery_url);
+
+        // kiriman berikutnya tanpa link tidak menghapus link yang sudah ada
+        $this->withToken($token)->postJson('/api/photobox/transactions', ['transactions' => [$this->row()]])->assertOk();
+        $this->assertSame($url, PhotoboxTransaction::first()->gallery_url);
+
+        // sudah diedit di kasir: data tetap milik kasir, tapi link galeri tetap bisa diperbarui
+        PhotoboxTransaction::first()->forceFill(['amount' => 20000, 'edited_at' => now()])->save();
+        $new = 'https://foto.example.com/s/ZZZZ29QXH4';
+        $this->withToken($token)->postJson('/api/photobox/transactions', ['transactions' => [$this->row(['gallery_url' => $new])]])
+            ->assertOk()->assertJsonPath('results.0.kept', 'edited');
+        $this->assertSame($new, PhotoboxTransaction::first()->gallery_url);
+        $this->assertSame(20000, (int) PhotoboxTransaction::first()->amount);
+    }
+
+    public function test_gallery_url_must_be_http_or_https(): void
+    {
+        [, $token] = $this->studio();
+        $this->withToken($token)->postJson('/api/photobox/transactions', ['transactions' => [$this->row(['gallery_url' => 'javascript:alert(1)'])]])
+            ->assertOk()->assertJsonPath('results.0.ok', false);
+        $this->assertSame(0, PhotoboxTransaction::count());
     }
 
     public function test_manually_edited_transaction_is_not_overwritten_by_resync(): void

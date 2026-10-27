@@ -119,6 +119,8 @@ class PhotoboxSyncController extends Controller
                 'paid_at' => ['nullable', 'date'],
                 'created_at' => ['nullable', 'date'],
                 'session_id' => ['nullable', 'string', 'max:64'],
+                // hanya http(s): dipakai sebagai link & pesan WhatsApp di kasir
+                'gallery_url' => ['nullable', 'string', 'max:500', 'regex:#^https?://#i'],
                 'meta' => ['nullable', 'array'],
             ]);
             $orderNo = is_array($row) ? (string) ($row['order_no'] ?? '') : '';
@@ -149,6 +151,10 @@ class PhotoboxSyncController extends Controller
             }
             // Sudah diedit manual di kasir: data kasir yang dipakai, jangan ditimpa kiriman booth
             if ($existing && $existing->edited_at) {
+                // link galeri tetap diperbarui walau data transaksi sudah diedit di kasir
+                if (! empty($d['gallery_url']) && $existing->gallery_url !== $d['gallery_url']) {
+                    $existing->forceFill(['gallery_url' => $d['gallery_url']])->save();
+                }
                 $results[] = ['order_no' => $d['order_no'], 'ok' => true, 'kept' => 'edited'];
 
                 continue;
@@ -175,6 +181,8 @@ class PhotoboxSyncController extends Controller
                     'paid_at' => $paidAt,
                     'booth_created_at' => $createdAt,
                     'session_id' => $d['session_id'] ?? null,
+                    // jangan hapus link yang sudah ada kalau kiriman berikutnya tidak membawa link
+                    'gallery_url' => $d['gallery_url'] ?? $existing?->gallery_url,
                     'meta' => $d['meta'] ?? null,
                 ]
             );

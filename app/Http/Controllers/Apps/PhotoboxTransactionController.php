@@ -60,6 +60,7 @@ class PhotoboxTransactionController extends Controller
                 'paid_at' => $t->paid_at?->toIso8601String(),
                 'paid_at_local' => $t->paid_at?->copy()->setTimezone(config('app.timezone'))->format('Y-m-d\TH:i'),
                 'edited' => (bool) $t->edited_at,
+                'gallery_url' => $t->gallery_url,
                 'booth_created_at' => $t->booth_created_at?->toIso8601String(),
             ]);
 

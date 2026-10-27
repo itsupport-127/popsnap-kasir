@@ -15,17 +15,26 @@ return new class extends Migration
 {
     public function up(): void
     {
+        // Aman dijalankan ulang: tiap kolom hanya ditambah kalau belum ada.
         Schema::table('photobox_transactions', function (Blueprint $table) {
-            $table->timestamp('edited_at')->nullable()->after('meta');
-            $table->softDeletes();
+            if (! Schema::hasColumn('photobox_transactions', 'edited_at')) {
+                $table->timestamp('edited_at')->nullable()->after('meta');
+            }
+            if (! Schema::hasColumn('photobox_transactions', 'deleted_at')) {
+                $table->softDeletes();
+            }
         });
     }
 
     public function down(): void
     {
         Schema::table('photobox_transactions', function (Blueprint $table) {
-            $table->dropSoftDeletes();
-            $table->dropColumn('edited_at');
+            if (Schema::hasColumn('photobox_transactions', 'deleted_at')) {
+                $table->dropSoftDeletes();
+            }
+            if (Schema::hasColumn('photobox_transactions', 'edited_at')) {
+                $table->dropColumn('edited_at');
+            }
         });
     }
 };

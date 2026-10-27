@@ -4,12 +4,26 @@ import DashboardLayout from "@/Layouts/DashboardLayout";
 import Table from "@/Components/Dashboard/Table";
 import Pagination from "@/Components/Dashboard/Pagination";
 import Swal from "sweetalert2";
-import { IconCamera, IconCopy, IconKey, IconPencil, IconPlus, IconTrash, IconX } from "@tabler/icons-react";
+import toast from "react-hot-toast";
+import { IconBrandWhatsapp, IconCamera, IconCopy, IconExternalLink, IconKey, IconPencil, IconPlus, IconTrash, IconX } from "@tabler/icons-react";
 
 const rupiah = (v = 0) =>
     new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", minimumFractionDigits: 0 }).format(v);
 const dt = (v) =>
     v ? new Intl.DateTimeFormat("id-ID", { dateStyle: "medium", timeStyle: "short", timeZone: "Asia/Jakarta" }).format(new Date(v)) : "-";
+
+const copyText = async (text, okMsg = "Link disalin") => {
+    try {
+        await navigator.clipboard.writeText(text);
+    } catch {
+        const ta = document.createElement("textarea");
+        ta.value = text; ta.style.position = "fixed"; ta.style.opacity = "0";
+        document.body.appendChild(ta); ta.select();
+        try { document.execCommand("copy"); } finally { document.body.removeChild(ta); }
+    }
+    toast.success(okMsg);
+};
+const waLink = (url) => `https://wa.me/?text=${encodeURIComponent(`Halo! Ini foto & video kamu dari Popsnap Photobox 📸\n${url}`)}`;
 
 const PERIODS = [
     ["today", "Hari ini"],
@@ -200,7 +214,7 @@ export default function Index({ filters, range, transactions, summary, studios, 
                     <Table.Thead>
                         <tr>
                             <Table.Th>No. Transaksi</Table.Th><Table.Th>Waktu</Table.Th><Table.Th>Studio</Table.Th><Table.Th>Produk</Table.Th>
-                            <Table.Th>Metode</Table.Th><Table.Th className="text-right">Jumlah</Table.Th><Table.Th>Status</Table.Th>{showActions && <Table.Th className="text-right">Aksi</Table.Th>}
+                            <Table.Th>Metode</Table.Th><Table.Th className="text-right">Jumlah</Table.Th><Table.Th>Status</Table.Th><Table.Th>Galeri</Table.Th>{showActions && <Table.Th className="text-right">Aksi</Table.Th>}
                         </tr>
                     </Table.Thead>
                     <Table.Tbody>
@@ -213,6 +227,15 @@ export default function Index({ filters, range, transactions, summary, studios, 
                                 <Table.Td>{METHOD_LABEL[t.method] || t.method}{t.voucher_code ? <span className="block font-mono text-xs text-slate-500">{t.voucher_code}</span> : null}</Table.Td>
                                 <Table.Td className="text-right">{rupiah(t.amount)}</Table.Td>
                                 <Table.Td><span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${STATUS_STYLE[t.status] || ""}`}>{STATUS_LABEL[t.status] || t.status}</span></Table.Td>
+                                <Table.Td>
+                                    {t.gallery_url ? (
+                                        <div className="flex gap-1.5">
+                                            <a href={t.gallery_url} target="_blank" rel="noopener noreferrer" title="Buka galeri" className="rounded-lg border border-sky-200 bg-sky-100 p-2 text-sky-600 hover:bg-sky-200 dark:border-sky-800 dark:bg-sky-900/40 dark:text-sky-400"><IconExternalLink size={16} /></a>
+                                            <button type="button" onClick={() => copyText(t.gallery_url)} title="Salin link" className="rounded-lg border border-slate-200 bg-slate-100 p-2 text-slate-600 hover:bg-slate-200 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"><IconCopy size={16} /></button>
+                                            <a href={waLink(t.gallery_url)} target="_blank" rel="noopener noreferrer" title="Kirim lewat WhatsApp" className="rounded-lg border border-emerald-200 bg-emerald-100 p-2 text-emerald-600 hover:bg-emerald-200 dark:border-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-400"><IconBrandWhatsapp size={16} /></a>
+                                        </div>
+                                    ) : <span className="text-xs text-slate-400">-</span>}
+                                </Table.Td>
                                 {showActions && (
                                     <Table.Td>
                                         <div className="flex justify-end gap-2">
@@ -222,7 +245,7 @@ export default function Index({ filters, range, transactions, summary, studios, 
                                     </Table.Td>
                                 )}
                             </tr>
-                        )) : <Table.Empty colSpan={showActions ? 8 : 7} message="Belum ada transaksi pada filter ini." />}
+                        )) : <Table.Empty colSpan={showActions ? 9 : 8} message="Belum ada transaksi pada filter ini." />}
                     </Table.Tbody>
                 </Table>
             </Table.Card>
