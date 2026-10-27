@@ -11,6 +11,7 @@ use App\Models\Setting;
 use App\Models\Transaction;
 use App\Models\TransactionDetail;
 use App\Services\CashierShiftService;
+use App\Models\PhotoboxStudio;
 use App\Services\PhotoboxStats;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
@@ -202,14 +203,25 @@ class DashboardController extends Controller
         $paymentMethods = $paymentMethods->values();
 
         // ── Rincian per sumber: kasir toko + tiap studio photobox (detail di menu masing-masing) ──
+        // Kasir langsung & booth selalu tampil (walau Rp 0), booth dirinci per studio. Studio aktif tetap tampil walau belum ada transaksi.
         $sources = collect([[
-            'key' => 'store', 'name' => 'Kasir Toko', 'type' => 'store',
+            'key' => 'store', 'name' => 'Kasir Langsung (Toko)', 'type' => 'store',
             'transactions' => $storeTransactions, 'sessions' => null, 'revenue' => $storeSales,
         ]]);
-        foreach ($photobox['byStudio'] ?? [] as $st) {
+        if ($photobox) {
+            $byStudio = collect($photobox['byStudio'] ?? [])->keyBy('id');
+            $studios = PhotoboxStudio::orderBy('name')->get()
+                ->filter(fn ($s) => $s->is_active || $byStudio->has($s->id))
+                ->map(fn ($s) => $byStudio->get($s->id) ?? ['id' => $s->id, 'name' => $s->name, 'sessions' => 0, 'transactions' => 0, 'revenue' => 0])
+                ->map(fn ($st) => [
+                    'key' => 'studio-'.$st['id'], 'name' => $st['name'], 'type' => 'studio', 'studio_id' => $st['id'],
+                    'transactions' => $st['transactions'], 'sessions' => $st['sessions'], 'revenue' => $st['revenue'],
+                ])
+                ->sortByDesc('revenue')->values();
             $sources->push([
-                'key' => 'studio-'.$st['id'], 'name' => $st['name'], 'type' => 'studio', 'studio_id' => $st['id'],
-                'transactions' => $st['transactions'], 'sessions' => $st['sessions'], 'revenue' => $st['revenue'],
+                'key' => 'photobox', 'name' => 'Booth Photobox', 'type' => 'photobox',
+                'transactions' => (int) $photobox['transactions'], 'sessions' => (int) $photobox['sessions'],
+                'revenue' => (int) $photobox['revenue'], 'children' => $studios,
             ]);
         }
 

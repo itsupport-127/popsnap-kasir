@@ -1,7 +1,7 @@
 import DashboardLayout from "@/Layouts/DashboardLayout";
 import { useAuthorization } from "@/Utils/authorization";
 import { Head, Link, router } from "@inertiajs/react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import Chart from "chart.js/auto";
 import {
     IconBox,
@@ -459,7 +459,7 @@ export default function Dashboard({
                                 title={`Penjualan ${periodLabel}`}
                                 value={formatCurrency(todaySales)}
                                 subtitle={photobox
-                                    ? `Toko ${formatCurrency(storeSales)} · Photobox ${formatCurrency(photobox.revenue)}`
+                                    ? `Kasir ${formatCurrency(storeSales)} · Booth ${formatCurrency(photobox.revenue)}`
                                     : `Total penjualan ${periodLabel.toLowerCase()}`}
                                 icon={IconCoin}
                                 gradient="from-primary-500 to-primary-700"
@@ -488,7 +488,7 @@ export default function Dashboard({
                             title={`Transaksi ${periodLabel}`}
                             value={todayTransactions}
                             subtitle={photobox
-                                ? `Toko ${storeTransactions} · Photobox ${photobox.transactions} (QRIS booth)`
+                                ? `Kasir ${storeTransactions} · Booth ${photobox.transactions} (QRIS booth)`
                                 : "Transaksi"}
                             icon={IconClock}
                             gradient="from-warning-500 to-warning-600"
@@ -497,41 +497,60 @@ export default function Dashboard({
                     )}
                 </div>
 
-                {/* Per sumber: kasir toko + tiap studio photobox. Detail transaksi ada di menu masing-masing. */}
-                {photobox && sources.length > 0 && (
-                    <ListCard
-                        title="Pendapatan per Sumber"
-                        subtitle={`${periodLabel} · toko + photobox sudah masuk ke angka di atas`}
-                        icon={IconCamera}
-                    >
-                        <ul className="divide-y divide-slate-100 dark:divide-slate-800">
-                            {sources.map((src) => {
-                                const href =
-                                    src.type === "store"
-                                        ? route("transactions.history")
-                                        : route("photobox-transactions.index", { period, studio_id: src.studio_id });
-                                return (
-                                    <li key={src.key} className="flex flex-wrap items-center justify-between gap-2 py-2.5 text-sm">
-                                        <span className="flex items-center gap-2 font-medium text-slate-800 dark:text-slate-100">
-                                            {src.type === "store" ? <IconShoppingCart size={16} /> : <IconCamera size={16} />}
-                                            {src.name}
-                                        </span>
-                                        <span className="flex items-center gap-4 text-slate-500 dark:text-slate-400">
-                                            <span>
-                                                {src.transactions} transaksi
-                                                {src.sessions !== null && src.sessions !== src.transactions ? ` · ${src.sessions} sesi` : ""}
-                                            </span>
-                                            <b className="min-w-[110px] text-right text-slate-800 dark:text-slate-100">{formatCurrency(src.revenue)}</b>
-                                            <Link href={href} className="text-xs font-semibold text-primary-600 hover:underline dark:text-primary-400">
-                                                Detail
-                                            </Link>
-                                        </span>
-                                    </li>
-                                );
-                            })}
-                        </ul>
-                    </ListCard>
-                )}
+                {/* Per sumber: kasir langsung + booth (dirinci per studio). Jumlahnya = angka penjualan di atas. */}
+                {photobox && sources.length > 0 && (() => {
+                    const totalRevenue = sources.reduce((a, x) => a + x.revenue, 0);
+                    const totalTx = sources.reduce((a, x) => a + x.transactions, 0);
+                    const share = (v) => (totalRevenue > 0 ? `${Math.round((v / totalRevenue) * 100)}%` : "0%");
+                    const hrefOf = (src) =>
+                        src.type === "store"
+                            ? route("transactions.history")
+                            : route("photobox-transactions.index", src.studio_id ? { period, studio_id: src.studio_id } : { period });
+                    const Row = ({ src, child = false }) => (
+                        <li className={`flex flex-wrap items-center justify-between gap-2 py-2.5 text-sm ${child ? "pl-8" : ""}`}>
+                            <span className={`flex items-center gap-2 ${child ? "text-slate-600 dark:text-slate-300" : "font-semibold text-slate-800 dark:text-slate-100"}`}>
+                                {src.type === "store" ? <IconShoppingCart size={16} /> : <IconCamera size={child ? 14 : 16} />}
+                                {src.name}
+                            </span>
+                            <span className="flex items-center gap-4 text-slate-500 dark:text-slate-400">
+                                <span>
+                                    {src.transactions} transaksi
+                                    {src.sessions !== null && src.sessions !== src.transactions ? ` · ${src.sessions} sesi` : ""}
+                                </span>
+                                <span className="min-w-[40px] text-right text-xs">{share(src.revenue)}</span>
+                                <b className="min-w-[110px] text-right text-slate-800 dark:text-slate-100">{formatCurrency(src.revenue)}</b>
+                                <Link href={hrefOf(src)} className="text-xs font-semibold text-primary-600 hover:underline dark:text-primary-400">
+                                    Detail
+                                </Link>
+                            </span>
+                        </li>
+                    );
+                    return (
+                        <ListCard
+                            title="Pendapatan per Sumber"
+                            subtitle={`${periodLabel} · kasir langsung + booth = angka penjualan di atas`}
+                            icon={IconCamera}
+                        >
+                            <ul className="divide-y divide-slate-100 dark:divide-slate-800">
+                                {sources.map((src) => (
+                                    <Fragment key={src.key}>
+                                        <Row src={src} />
+                                        {(src.children || []).map((c) => <Row key={c.key} src={c} child />)}
+                                    </Fragment>
+                                ))}
+                                <li className="flex items-center justify-between gap-2 py-2.5 text-sm font-bold text-slate-900 dark:text-white">
+                                    <span>Total</span>
+                                    <span className="flex items-center gap-4">
+                                        <span className="font-medium text-slate-500 dark:text-slate-400">{totalTx} transaksi</span>
+                                        <span className="min-w-[40px]" />
+                                        <span className="min-w-[110px] text-right">{formatCurrency(totalRevenue)}</span>
+                                        <span className="w-[44px]" />
+                                    </span>
+                                </li>
+                            </ul>
+                        </ListCard>
+                    );
+                })()}
 
                 {/* Secondary Stats */}
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
