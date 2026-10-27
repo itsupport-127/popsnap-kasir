@@ -34,6 +34,64 @@ class PhotoboxSyncController extends Controller
         return response()->json(['ok' => true, 'studio' => $studio->name, 'serverTime' => now()->toIso8601String()]);
     }
 
+    /**
+     * Perubahan yang dibuat di kasir (edit / hapus) untuk studio ini, supaya booth ikut menyesuaikan.
+     * Booth menarik (polling) karena booth di belakang jaringan lokal. Parameter ?since=<cursor> dari jawaban sebelumnya.
+     * Aman diulang: booth menerapkan perubahan yang sama berkali-kali tanpa efek ganda.
+     */
+    public function changes(Request $request): JsonResponse
+    {
+        $studio = $this->studio($request);
+        if (! $studio) {
+            return response()->json(['ok' => false, 'error' => 'Token tidak valid atau studio nonaktif.'], 401);
+        }
+
+        $since = null;
+        if ($request->filled('since')) {
+            try {
+                $since = Carbon::parse((string) $request->query('since'));
+            } catch (\Throwable) {
+                return response()->json(['ok' => false, 'error' => 'Parameter "since" tidak valid.'], 422);
+            }
+        }
+
+        $rows = PhotoboxTransaction::withTrashed()
+            ->where('studio_id', $studio->id)
+            ->where(function ($q) use ($since) {
+                $q->whereNotNull('edited_at')->orWhereNotNull('deleted_at');
+                if ($since) {
+                    $q->where(function ($w) use ($since) {
+                        $w->where('edited_at', '>=', $since)->orWhere('deleted_at', '>=', $since);
+                    });
+                }
+            })
+            ->orderByRaw('COALESCE(deleted_at, edited_at)')
+            ->orderBy('id')
+            ->limit(200)
+            ->get();
+
+        $changes = $rows->map(function (PhotoboxTransaction $t) {
+            $changedAt = $t->deleted_at ?? $t->edited_at;
+
+            return [
+                'order_no' => $t->order_no,
+                'deleted' => $t->trashed(),
+                'template_name' => $t->template_name,
+                'method' => $t->method,
+                'amount' => (int) $t->amount,
+                'status' => $t->status,
+                'paid_at' => $t->paid_at?->toIso8601String(),
+                'changed_at' => $changedAt?->toIso8601String(),
+            ];
+        })->values();
+
+        return response()->json([
+            'ok' => true,
+            'changes' => $changes,
+            'cursor' => $changes->last()['changed_at'] ?? ($since?->toIso8601String()),
+        ]);
+    }
+
     public function store(Request $request): JsonResponse
     {
         $studio = $this->studio($request);

@@ -26,4 +26,5 @@ Route::prefix('webhooks')->group(function () {
 Route::prefix('photobox')->middleware('throttle:120,1')->group(function () {
     Route::get('/ping', [PhotoboxSyncController::class, 'ping'])->name('photobox.ping');
     Route::post('/transactions', [PhotoboxSyncController::class, 'store'])->name('photobox.transactions.store');
+    Route::get('/changes', [PhotoboxSyncController::class, 'changes'])->name('photobox.changes');
 });
