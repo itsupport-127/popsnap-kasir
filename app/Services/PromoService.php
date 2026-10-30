@@ -536,6 +536,25 @@ class PromoService
         return $allocated;
     }
 
+    /**
+     * Potongan voucher manual bertipe "Harga Final" untuk $qtyTouched unit di satu baris keranjang.
+     *
+     * - Dihitung dari harga satuan ASLI baris (line_total / qty), bukan dari sisa nilai baris, supaya
+     *   pemakaian kode ke-2 di baris yang sama (qty > 1) tidak menghitung ulang dari harga yang sudah turun.
+     * - Tidak pernah menurunkan baris di bawah harga final x qty. Unit yang sudah berharga final tidak
+     *   dipotong lagi (hasil 0), sehingga pemakaian kode berikutnya pindah ke barang lain.
+     * - Barang yang harganya sudah <= harga final tidak kena potongan (tidak pernah jadi lebih mahal).
+     */
+    private function fixedPriceVoucherDiscount($item, int $targetUnitPrice, int $qty, int $qtyTouched, int $remainingLineValue): int
+    {
+        $originalLine = (int) data_get($item, 'line_total', data_get($item, 'price', 0));
+        $unitOriginal = intdiv($originalLine, max(1, $qty));
+        $perUnitDiscount = max(0, $unitOriginal - max(0, $targetUnitPrice));
+        $floor = max(0, $targetUnitPrice) * $qty;
+
+        return max(0, min($perUnitDiscount * $qtyTouched, $remainingLineValue - $floor));
+    }
+
     private function calculateLineCandidate(Promo $promo, Product $product, int $quantity): ?array
     {
         if (! $this->matchesTarget($promo, $product)) {
@@ -974,6 +993,15 @@ class PromoService
             $lineDiscount = match ($promo->discount_type) {
                 Promo::TYPE_PERCENTAGE => (int) round($touchedValue * ((float) $promo->discount_value / 100)),
                 Promo::TYPE_FIXED_AMOUNT => min($touchedValue, (int) round((float) $promo->discount_value) * $qtyAvailableHere),
+                // "Harga Final" per unit (mis. paket Halloween Rp 20.000). Sebelumnya jatuh ke default => 0,
+                // jadi voucher dengan tipe ini selalu dianggap tidak ada diskon dan ditolak di kasir.
+                Promo::TYPE_FIXED_PRICE => $this->fixedPriceVoucherDiscount(
+                    $item,
+                    (int) round((float) $promo->discount_value),
+                    $qty,
+                    $qtyAvailableHere,
+                    $remainingLineValue
+                ),
                 default => 0,
             };
             $lineDiscount = min($touchedValue, max(0, $lineDiscount));

@@ -23,7 +23,24 @@ const copyText = async (text, okMsg = "Link disalin") => {
     }
     toast.success(okMsg);
 };
-const waLink = (url) => `https://wa.me/?text=${encodeURIComponent(`Halo! Ini foto & video kamu dari Popsnap Photobox 📸\n${url}`)}`;
+// Sapaan WhatsApp otomatis. Nomor pelanggan diambil dari transaksi kasir (kalau ada), kalau tidak ada CS pilih sendiri kontaknya.
+const waLink = (t) => {
+    const hai = t.customer_name ? `Halo kak ${t.customer_name}!` : "Halo kak!";
+    const text = `${hai} Terima kasih sudah berfoto di Popsnap Photobox 📸\nIni link foto & video kakak (berlaku beberapa hari, jangan lupa disimpan ya):\n${t.gallery_url}`;
+    return `https://wa.me/${t.customer_wa || ""}?text=${encodeURIComponent(text)}`;
+};
+const GALLERY_BADGE = {
+    uploaded: ["Terupload", "bg-emerald-100 text-emerald-700"],
+    pending: ["Belum terupload", "bg-amber-100 text-amber-700"],
+    expired: ["Kedaluwarsa", "bg-slate-200 text-slate-600"],
+    unknown: ["Status tidak diketahui", "bg-slate-100 text-slate-500"],
+};
+const SOCIAL_BADGE = {
+    3: ["Sosmed + Mading", "bg-emerald-100 text-emerald-700"],
+    1: ["Sosmed", "bg-emerald-100 text-emerald-700"],
+    2: ["Mading", "bg-sky-100 text-sky-700"],
+    0: ["Tidak boleh dipakai", "bg-rose-100 text-rose-700"],
+};
 
 const PERIODS = [
     ["today", "Hari ini"],
@@ -54,13 +71,20 @@ function Stat({ label, value, sub }) {
     );
 }
 
-export default function Index({ filters, range, transactions, summary, studios, canManage, canEdit, canDelete, apiUrl, newToken, newTokenStudio }) {
+export default function Index({ filters, range, transactions, summary, studios, galleryStatusOn, canManage, canEdit, canDelete, apiUrl, newToken, newTokenStudio }) {
     const [showStudios, setShowStudios] = useState(!!newToken || studios.length === 0);
     const form = useForm({ name: "" });
     const [editing, setEditing] = useState(null);
     const editForm = useForm({ template_name: "", method: "qris", amount: 0, status: "paid", paid_at: "" });
     const showActions = canEdit || canDelete;
     const [searchText, setSearchText] = useState(filters.search || "");
+    // Ada yang "belum terupload": cek ulang tiap 30 detik supaya statusnya berubah sendiri begitu CS selesai unggah manual
+    const hasPending = !!galleryStatusOn && transactions.data.some((t) => t.gallery_state === "pending");
+    useEffect(() => {
+        if (!hasPending) return undefined;
+        const id = setInterval(() => { if (!document.hidden) router.reload({ only: ["transactions"], preserveScroll: true, preserveState: true }); }, 30000);
+        return () => clearInterval(id);
+    }, [hasPending]);
     useEffect(() => { setSearchText(filters.search || ""); }, [filters.search]); // ikut berubah kalau halaman dibuka dengan pencarian dari link lain
     const hasFilters = !!(filters.studio_id || filters.method || filters.status || filters.search);
     const resetFilters = () => { setSearchText(""); go({ studio_id: "", method: "", status: "", search: "" }); };
@@ -305,7 +329,7 @@ export default function Index({ filters, range, transactions, summary, studios, 
                     <Table.Thead>
                         <tr>
                             <Table.Th>No. Transaksi</Table.Th><Table.Th>Waktu</Table.Th><Table.Th>Studio</Table.Th><Table.Th>Produk</Table.Th>
-                            <Table.Th>Metode</Table.Th><Table.Th className="text-right">Jumlah</Table.Th><Table.Th>Status</Table.Th><Table.Th>Galeri</Table.Th>{showActions && <Table.Th className="text-right">Aksi</Table.Th>}
+                            <Table.Th>Metode</Table.Th><Table.Th className="text-right">Jumlah</Table.Th><Table.Th>Status</Table.Th><Table.Th>Galeri</Table.Th><Table.Th>Izin foto</Table.Th>{showActions && <Table.Th className="text-right">Aksi</Table.Th>}
                         </tr>
                     </Table.Thead>
                     <Table.Tbody>
@@ -320,12 +344,24 @@ export default function Index({ filters, range, transactions, summary, studios, 
                                 <Table.Td><span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${STATUS_STYLE[t.status] || ""}`}>{STATUS_LABEL[t.status] || t.status}</span></Table.Td>
                                 <Table.Td>
                                     {t.gallery_url ? (
-                                        <div className="flex gap-1.5">
-                                            <a href={t.gallery_url} target="_blank" rel="noopener noreferrer" title="Buka galeri" className="rounded-lg border border-sky-200 bg-sky-100 p-2 text-sky-600 hover:bg-sky-200 dark:border-sky-800 dark:bg-sky-900/40 dark:text-sky-400"><IconExternalLink size={16} /></a>
-                                            <button type="button" onClick={() => copyText(t.gallery_url)} title="Salin link" className="rounded-lg border border-slate-200 bg-slate-100 p-2 text-slate-600 hover:bg-slate-200 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"><IconCopy size={16} /></button>
-                                            <a href={waLink(t.gallery_url)} target="_blank" rel="noopener noreferrer" title="Kirim lewat WhatsApp" className="rounded-lg border border-emerald-200 bg-emerald-100 p-2 text-emerald-600 hover:bg-emerald-200 dark:border-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-400"><IconBrandWhatsapp size={16} /></a>
+                                        <div className="flex flex-col gap-1.5">
+                                            {galleryStatusOn && t.gallery_state && GALLERY_BADGE[t.gallery_state] && (
+                                                <span className={`w-fit rounded-full px-2.5 py-1 text-xs font-semibold ${GALLERY_BADGE[t.gallery_state][1]}`}>{GALLERY_BADGE[t.gallery_state][0]}{t.gallery_state === "uploaded" ? ` · ${t.gallery_files} file` : ""}</span>
+                                            )}
+                                            <div className="flex gap-1.5">
+                                                <a href={t.gallery_url} target="_blank" rel="noopener noreferrer" title="Buka galeri" className="rounded-lg border border-sky-200 bg-sky-100 p-2 text-sky-600 hover:bg-sky-200 dark:border-sky-800 dark:bg-sky-900/40 dark:text-sky-400"><IconExternalLink size={16} /></a>
+                                                <button type="button" onClick={() => copyText(t.gallery_url)} title="Salin link" className="rounded-lg border border-slate-200 bg-slate-100 p-2 text-slate-600 hover:bg-slate-200 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"><IconCopy size={16} /></button>
+                                                {galleryStatusOn && t.gallery_state === "pending" ? (
+                                                    <span title="Foto belum ada di galeri. Unggah manual dulu di website galeri (menu Link pelanggan), baru kirim WhatsApp." className="cursor-not-allowed rounded-lg border border-slate-200 bg-slate-100 p-2 text-slate-300 dark:border-slate-700 dark:bg-slate-800"><IconBrandWhatsapp size={16} /></span>
+                                                ) : (
+                                                    <a href={waLink(t)} target="_blank" rel="noopener noreferrer" title={t.customer_wa ? `Kirim WhatsApp ke ${t.customer_name || t.customer_wa}` : "Kirim lewat WhatsApp (pilih kontak)"} className="rounded-lg border border-emerald-200 bg-emerald-100 p-2 text-emerald-600 hover:bg-emerald-200 dark:border-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-400"><IconBrandWhatsapp size={16} /></a>
+                                                )}
+                                            </div>
                                         </div>
                                     ) : <span className="text-xs text-slate-400">-</span>}
+                                </Table.Td>
+                                <Table.Td>
+                                    {t.social == null ? <span className="text-xs text-slate-400">{t.gallery_url ? "Belum dijawab" : "-"}</span> : <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${SOCIAL_BADGE[t.social][1]}`}>{SOCIAL_BADGE[t.social][0]}</span>}
                                 </Table.Td>
                                 {showActions && (
                                     <Table.Td>
@@ -336,7 +372,7 @@ export default function Index({ filters, range, transactions, summary, studios, 
                                     </Table.Td>
                                 )}
                             </tr>
-                        )) : <Table.Empty colSpan={showActions ? 9 : 8} message="Belum ada transaksi pada filter ini." />}
+                        )) : <Table.Empty colSpan={showActions ? 10 : 9} message="Belum ada transaksi pada filter ini." />}
                     </Table.Tbody>
                 </Table>
             </Table.Card>

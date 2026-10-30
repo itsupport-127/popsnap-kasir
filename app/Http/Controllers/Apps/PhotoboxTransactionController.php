@@ -5,6 +5,8 @@ namespace App\Http\Controllers\Apps;
 use App\Http\Controllers\Controller;
 use App\Models\PhotoboxStudio;
 use App\Models\PhotoboxTransaction;
+use App\Models\Transaction;
+use App\Services\GalleryStatus;
 use App\Services\PhotoboxStats;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -63,7 +65,28 @@ class PhotoboxTransactionController extends Controller
                 'edited' => (bool) $t->edited_at,
                 'gallery_url' => $t->gallery_url,
                 'booth_created_at' => $t->booth_created_at?->toIso8601String(),
+                'kasir_reference' => $t->meta['kasir_reference'] ?? null,
             ]);
+
+        // Status galeri (terupload / izin foto) + nomor WhatsApp pelanggan dari transaksi kasir
+        $page = $transactions->getCollection();
+        $gallery = GalleryStatus::fetch($page->map(fn ($r) => GalleryStatus::tokenFromUrl($r['gallery_url']))->filter()->all());
+        $phones = Transaction::query()->with('customer:id,name,no_telp')
+            ->whereIn('invoice', $page->pluck('kasir_reference')->filter()->unique()->all())
+            ->get()->keyBy('invoice');
+        $transactions->setCollection($page->map(function ($r) use ($gallery, $phones) {
+            $tok = GalleryStatus::tokenFromUrl($r['gallery_url']);
+            $g = $tok ? ($gallery[$tok] ?? null) : null;
+            $cust = $r['kasir_reference'] ? ($phones[$r['kasir_reference']]->customer ?? null) : null;
+            $r['gallery_state'] = ! $r['gallery_url'] ? null : (! $g ? 'unknown' : (! empty($g['expired']) ? 'expired' : (($g['files'] ?? 0) > 0 ? 'uploaded' : 'pending')));
+            $r['gallery_files'] = $g['files'] ?? 0;
+            $r['social'] = $g['social'] ?? null;
+            $r['customer_name'] = $cust?->name;
+            $r['customer_wa'] = GalleryStatus::waNumber($cust?->no_telp);
+            unset($r['kasir_reference']);
+
+            return $r;
+        }));
 
         $canManage = $request->user()?->can('photobox-manage') ?? false;
 
@@ -85,6 +108,7 @@ class PhotoboxTransactionController extends Controller
                 'token_hint' => $s->token_hint,
                 'last_seen_at' => $s->last_seen_at?->toIso8601String(),
             ]),
+            'galleryStatusOn' => GalleryStatus::baseUrl() !== null,
             'canManage' => $canManage,
             'canEdit' => $request->user()?->can('photobox-edit') ?? false,
             'canDelete' => $request->user()?->can('photobox-delete') ?? false,

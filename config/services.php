@@ -37,6 +37,11 @@ return [
         'server_key' => env('MIDTRANS_SERVER_KEY'),
     ],
 
+    // POPSNAP Galeri (VPS): dipakai kasir untuk membaca status sesi (terupload / izin foto)
+    'popsnap_gallery' => [
+        'url' => env('POPSNAP_GALLERY_URL'),
+    ],
+
     'slack' => [
         'notifications' => [
             'bot_user_oauth_token' => env('SLACK_BOT_USER_OAUTH_TOKEN'),
