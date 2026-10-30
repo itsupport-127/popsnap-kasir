@@ -25,8 +25,8 @@ const copyText = async (text, okMsg = "Link disalin") => {
 };
 // Sapaan WhatsApp otomatis. Nomor pelanggan diambil dari transaksi kasir (kalau ada), kalau tidak ada CS pilih sendiri kontaknya.
 const waLink = (t) => {
-    const hai = t.customer_name ? `Halo kak ${t.customer_name}!` : "Halo kak!";
-    const text = `${hai} Terima kasih sudah berfoto di Popsnap Photobox 📸\nIni link foto & video kakak (berlaku beberapa hari, jangan lupa disimpan ya):\n${t.gallery_url}`;
+    const hai = t.customer_name ? `Hii ${t.customer_name}!` : "Hii kak!";
+    const text = `${hai} Thanks for stopping by Popsnap! 📸\nHere's your photobox soft file:\n${t.gallery_url}\n\nHope you had tons of fun, come again soon! 💛`;
     return `https://wa.me/${t.customer_wa || ""}?text=${encodeURIComponent(text)}`;
 };
 const GALLERY_BADGE = {
@@ -329,7 +329,7 @@ export default function Index({ filters, range, transactions, summary, studios, 
                     <Table.Thead>
                         <tr>
                             <Table.Th>No. Transaksi</Table.Th><Table.Th>Waktu</Table.Th><Table.Th>Studio</Table.Th><Table.Th>Produk</Table.Th>
-                            <Table.Th>Metode</Table.Th><Table.Th className="text-right">Jumlah</Table.Th><Table.Th>Status</Table.Th><Table.Th>Galeri</Table.Th><Table.Th>Izin foto</Table.Th>{showActions && <Table.Th className="text-right">Aksi</Table.Th>}
+                            <Table.Th>Metode</Table.Th><Table.Th className="text-right">Jumlah</Table.Th><Table.Th>Status</Table.Th><Table.Th>Galeri</Table.Th><Table.Th>WhatsApp</Table.Th><Table.Th>Izin foto</Table.Th>{showActions && <Table.Th className="text-right">Aksi</Table.Th>}
                         </tr>
                     </Table.Thead>
                     <Table.Tbody>
@@ -351,14 +351,21 @@ export default function Index({ filters, range, transactions, summary, studios, 
                                             <div className="flex gap-1.5">
                                                 <a href={t.gallery_url} target="_blank" rel="noopener noreferrer" title="Buka galeri" className="rounded-lg border border-sky-200 bg-sky-100 p-2 text-sky-600 hover:bg-sky-200 dark:border-sky-800 dark:bg-sky-900/40 dark:text-sky-400"><IconExternalLink size={16} /></a>
                                                 <button type="button" onClick={() => copyText(t.gallery_url)} title="Salin link" className="rounded-lg border border-slate-200 bg-slate-100 p-2 text-slate-600 hover:bg-slate-200 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"><IconCopy size={16} /></button>
-                                                {galleryStatusOn && t.gallery_state === "pending" ? (
-                                                    <span title="Foto belum ada di galeri. Unggah manual dulu di website galeri (menu Link pelanggan), baru kirim WhatsApp." className="cursor-not-allowed rounded-lg border border-slate-200 bg-slate-100 p-2 text-slate-300 dark:border-slate-700 dark:bg-slate-800"><IconBrandWhatsapp size={16} /></span>
-                                                ) : (
-                                                    <a href={waLink(t)} target="_blank" rel="noopener noreferrer" title={t.customer_wa ? `Kirim WhatsApp ke ${t.customer_name || t.customer_wa}` : "Kirim lewat WhatsApp (pilih kontak)"} className="rounded-lg border border-emerald-200 bg-emerald-100 p-2 text-emerald-600 hover:bg-emerald-200 dark:border-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-400"><IconBrandWhatsapp size={16} /></a>
-                                                )}
                                             </div>
                                         </div>
                                     ) : <span className="text-xs text-slate-400">-</span>}
+                                </Table.Td>
+                                <Table.Td>
+                                    {(() => {
+                                        const ready = !!t.gallery_url && (!galleryStatusOn || t.gallery_state === "uploaded" || t.gallery_state === "unknown");
+                                        const base = "inline-flex items-center gap-1.5 whitespace-nowrap rounded-lg border px-3 py-2 text-xs font-semibold";
+                                        if (!ready) {
+                                            const why = !t.gallery_url ? "Link belum ada" : t.gallery_state === "expired" ? "Link kedaluwarsa" : "Foto belum terupload";
+                                            return <span title={`${why}. Unggah dulu di website galeri (menu Link pelanggan), lalu tombol ini aktif.`} className={`${base} cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400 dark:border-slate-700 dark:bg-slate-800`}><IconBrandWhatsapp size={16} />Kirim link</span>;
+                                        }
+                                        return <a href={waLink(t)} target="_blank" rel="noopener noreferrer" title={t.customer_wa ? `Kirim ke ${t.customer_name || t.customer_wa}` : "Nomor tamu tidak ada, pilih kontak di WhatsApp"} className={`${base} border-emerald-200 bg-emerald-100 text-emerald-700 hover:bg-emerald-200 dark:border-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-400`}><IconBrandWhatsapp size={16} />Kirim link</a>;
+                                    })()}
+                                    {t.customer_wa && <span className="mt-1 block text-[11px] text-slate-500">+{t.customer_wa}</span>}
                                 </Table.Td>
                                 <Table.Td>
                                     {t.social == null ? <span className="text-xs text-slate-400">{t.gallery_url ? "Belum dijawab" : "-"}</span> : <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${SOCIAL_BADGE[t.social][1]}`}>{SOCIAL_BADGE[t.social][0]}</span>}
@@ -372,7 +379,7 @@ export default function Index({ filters, range, transactions, summary, studios, 
                                     </Table.Td>
                                 )}
                             </tr>
-                        )) : <Table.Empty colSpan={showActions ? 10 : 9} message="Belum ada transaksi pada filter ini." />}
+                        )) : <Table.Empty colSpan={showActions ? 11 : 10} message="Belum ada transaksi pada filter ini." />}
                     </Table.Tbody>
                 </Table>
             </Table.Card>
