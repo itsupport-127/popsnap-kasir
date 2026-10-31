@@ -1169,6 +1169,8 @@ class PromoService
             'applies_to_qty' => $promo->applies_to_qty,
             'minimum_order' => (int) $promo->minimum_order,
             'target_type' => $promo->target_type,
+            'product_id' => $promo->product_id,
+            'category_id' => $promo->category_id,
             'buy_qty' => $promo->buy_qty,
             'get_qty' => $promo->get_qty,
             'get_discount_percent' => $promo->get_discount_percent,

@@ -71,6 +71,34 @@ class TransactionController extends Controller
     }
 
     /**
+     * Voucher yang ditempelkan kasir ke 1 baris keranjang (pilih sendiri barang yang didiskon).
+     * Input: [{cart_id, promo_id}, ...]. Satu pasangan = satu kali pemakaian kode di baris itu.
+     * cart_id yang bukan milik keranjang kasir ini otomatis diabaikan di LoyaltyService::previewCheckout().
+     *
+     * @return array<int, array{cart_id:int, promo:Promo}>
+     */
+    private function resolveItemVouchers(mixed $entries): array
+    {
+        $entries = collect(is_array($entries) ? $entries : [])
+            ->filter(fn ($e) => is_array($e) && isset($e['cart_id'], $e['promo_id']))
+            ->map(fn ($e) => ['cart_id' => (int) $e['cart_id'], 'promo_id' => (int) $e['promo_id']])
+            ->filter(fn ($e) => $e['cart_id'] > 0 && $e['promo_id'] > 0)
+            ->values();
+
+        if ($entries->isEmpty()) {
+            return [];
+        }
+
+        $promos = Promo::whereIn('id', $entries->pluck('promo_id')->unique()->all())->get()->keyBy('id');
+
+        return $entries
+            ->map(fn ($e) => ['cart_id' => $e['cart_id'], 'promo' => $promos->get($e['promo_id'])])
+            ->filter(fn ($e) => $e['promo'])
+            ->values()
+            ->all();
+    }
+
+    /**
      * index
      *
      * @return void
@@ -256,6 +284,10 @@ class TransactionController extends Controller
             'item_discounts.*.cart_id' => ['required', 'integer'],
             'item_discounts.*.mode' => ['required', Rule::in(['nominal', 'percent'])],
             'item_discounts.*.value' => ['required', 'numeric', 'min:0'],
+            // Voucher yang ditempelkan ke 1 baris keranjang tertentu.
+            'item_vouchers' => ['nullable', 'array'],
+            'item_vouchers.*.cart_id' => ['required', 'integer'],
+            'item_vouchers.*.promo_id' => ['required', 'integer', 'exists:promos,id'],
         ]);
 
         $customer = isset($validated['customer_id'])
@@ -283,6 +315,7 @@ class TransactionController extends Controller
                 'vouchers' => $vouchers,
                 'payment_method' => $validated['payment_method'] ?? null,
                 'item_discounts' => $validated['item_discounts'] ?? [],
+                'item_vouchers' => $this->resolveItemVouchers($validated['item_vouchers'] ?? []),
             ]),
         ]);
     }
@@ -674,6 +707,7 @@ class TransactionController extends Controller
             $requestedVoucherIds = [$request->integer('customer_voucher_id')];
         }
         $vouchers = $this->resolveVouchersByIds($requestedVoucherIds);
+        $itemVouchers = $this->resolveItemVouchers($request->input('item_vouchers', []));
 
         $transaction = DB::transaction(function () use (
             $request,
@@ -691,7 +725,8 @@ class TransactionController extends Controller
             $requestedRedeemPoints,
             $customer,
             $vouchers,
-            $itemDiscounts
+            $itemDiscounts,
+            $itemVouchers
         ) {
             $carts = Cart::with('product')
                 ->where('cashier_id', auth()->user()->id)
@@ -712,6 +747,7 @@ class TransactionController extends Controller
                 'shippingCost' => $shippingCost,
                 'requestedRedeemPoints' => $requestedRedeemPoints,
                 'itemDiscounts' => $itemDiscounts,
+                'itemVouchers' => $itemVouchers,
                 'customerId' => $request->customer_id,
                 'dueDate' => $request->due_date,
                 'bankAccountId' => $paymentGateway === 'bank_transfer' ? $request->bank_account_id : null,
@@ -778,6 +814,7 @@ class TransactionController extends Controller
         $shippingCost = $opts['shippingCost'];
         $requestedRedeemPoints = $opts['requestedRedeemPoints'];
         $itemDiscounts = $opts['itemDiscounts'];
+        $itemVouchers = $opts['itemVouchers'] ?? [];
 
         // Kalau lagi EDIT, transaksi tetap "milik" shift ASLINYA — bukan
         // shift yang sedang aktif sekarang. Kalau ini transaksi BARU, wajib
@@ -822,6 +859,7 @@ class TransactionController extends Controller
             'vouchers' => $vouchers,
             'payment_method' => $finalPaymentMethod,
             'item_discounts' => $itemDiscounts,
+            'item_vouchers' => $itemVouchers,
         ]);
         $pricingItems = collect($pricingPreview['items']);
         $subtotalAfterPromo = (int) data_get($pricingPreview, 'summary.subtotal_after_promo', 0);
@@ -941,7 +979,15 @@ class TransactionController extends Controller
 
         $appliedVoucherIds = collect(data_get($checkoutPreview, 'vouchers', []))->pluck('id')->all();
 
-        foreach ($vouchers as $appliedVoucher) {
+        // Voucher yang ditempel ke 1 barang (item_vouchers) juga harus menghabiskan kuota / ditandai terpakai,
+        // sama seperti voucher biasa. Satu instance model per id dipakai bersama supaya kode yang sama
+        // (biasa + ditempel) bertambah used_count-nya dengan benar, bukan saling menimpa.
+        $voucherInstances = [];
+        $allVouchers = $vouchers
+            ->concat(collect($itemVouchers)->pluck('promo'))
+            ->map(fn ($voucher) => $voucherInstances[$voucher->id] ??= $voucher);
+
+        foreach ($allVouchers as $appliedVoucher) {
             if (! in_array($appliedVoucher->id, $appliedVoucherIds, true)) {
                 continue;
             }
@@ -1277,6 +1323,7 @@ class TransactionController extends Controller
             $requestedVoucherIds = [$request->integer('customer_voucher_id')];
         }
         $vouchers = $this->resolveVouchersByIds($requestedVoucherIds);
+        $itemVouchers = $this->resolveItemVouchers($request->input('item_vouchers', []));
 
         $transaction->load(['details.product', 'profits', 'customer:id,name']);
         $snapshot = $transaction->toArray();
@@ -1285,7 +1332,7 @@ class TransactionController extends Controller
         $updated = DB::transaction(function () use (
             $request, $transaction, $cashAmount, $paymentGateway, $isCashPayment, $isQrisStatic,
             $isDualPayment, $dualCash, $dualQris, $isPayLater, $manualDiscount, $shippingCost,
-            $requestedRedeemPoints, $customer, $vouchers, $itemDiscounts
+            $requestedRedeemPoints, $customer, $vouchers, $itemDiscounts, $itemVouchers
         ) {
             // ── Batalkan semua efek transaksi LAMA (persis logic destroy(),
             //    minus menghapus baris transaksinya sendiri) ──────────────
@@ -1346,6 +1393,7 @@ class TransactionController extends Controller
                 'shippingCost' => $shippingCost,
                 'requestedRedeemPoints' => $requestedRedeemPoints,
                 'itemDiscounts' => $itemDiscounts,
+                'itemVouchers' => $itemVouchers,
                 'customerId' => $request->customer_id,
                 'dueDate' => $request->due_date,
                 'bankAccountId' => $paymentGateway === 'bank_transfer' ? $request->bank_account_id : null,

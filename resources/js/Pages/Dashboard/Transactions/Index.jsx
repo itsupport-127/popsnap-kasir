@@ -125,6 +125,45 @@ export default function Index({
     const [itemDiscounts, setItemDiscounts] = useState({});
     const [openItemDiscountCartId, setOpenItemDiscountCartId] = useState(null);
 
+    // Voucher yang DITEMPELKAN ke 1 baris keranjang: kasir memilih sendiri barang yang didiskon,
+    // bukan otomatis termurah. { [cart_id]: ["promoId", ...] } — id boleh berulang (kode dipakai
+    // berkali-kali di baris itu, mis. 2 orang berkostum di paket yang sama).
+    const [itemVouchers, setItemVouchers] = useState({});
+    const [itemDiscountTab, setItemDiscountTab] = useState("manual"); // "manual" | "voucher"
+    const [itemVoucherCode, setItemVoucherCode] = useState("");
+
+    const addItemVoucher = useCallback((cartId, promoId) => {
+        setItemVouchers((prev) => ({
+            ...prev,
+            [cartId]: [...(prev[cartId] || []), String(promoId)],
+        }));
+    }, []);
+
+    const removeItemVoucher = useCallback((cartId, promoId) => {
+        setItemVouchers((prev) => {
+            const list = prev[cartId] || [];
+            const idx = list.lastIndexOf(String(promoId));
+            if (idx === -1) return prev;
+            const nextList = [...list];
+            nextList.splice(idx, 1);
+            const next = { ...prev };
+            if (nextList.length) next[cartId] = nextList;
+            else delete next[cartId];
+            return next;
+        });
+    }, []);
+
+    const itemVouchersPayload = useMemo(
+        () =>
+            Object.entries(itemVouchers).flatMap(([cartId, ids]) =>
+                ids.map((promoId) => ({
+                    cart_id: Number(cartId),
+                    promo_id: Number(promoId),
+                })),
+            ),
+        [itemVouchers],
+    );
+
     const setItemDiscountMode = useCallback((cartId, mode) => {
         setItemDiscounts((prev) => ({
             ...prev,
@@ -342,6 +381,7 @@ export default function Index({
                 customer_voucher_ids: selectedVoucherIds,
                 payment_method: effectivePaymentMethod,
                 item_discounts: itemDiscountsPayload,
+                item_vouchers: itemVouchersPayload,
             })
             .then((response) => {
                 if (!cancelled) {
@@ -372,6 +412,7 @@ export default function Index({
         redeemPointsInput,
         selectedVoucherIds,
         itemDiscountsPayload,
+        itemVouchersPayload,
         paymentMethod,
         payLater,
         dualPayment,
@@ -453,6 +494,55 @@ export default function Index({
                 : `Voucher "${match.name}" diterapkan`,
         );
     }, [promoCodeInput, pricingPreview?.eligible_vouchers, selectedVoucherIds, voucherCounts]);
+
+    // Apakah voucher ini bisa ditempel ke baris keranjang tertentu. Hanya cek tampilan —
+    // keputusan akhir tetap di backend. Hanya diskon biasa (jenis lain dipakai dari voucher transaksi).
+    const voucherFitsCartItem = useCallback((voucher, cartItem) => {
+        if (!voucher || voucher.discount_kind !== "standard_discount") return false;
+        const productId = Number(cartItem.product_id ?? cartItem.product?.id);
+        const categoryId = Number(cartItem.product?.category_id);
+        if (voucher.target_type === "product") return Number(voucher.product_id) === productId;
+        if (voucher.target_type === "category") return Number(voucher.category_id) === categoryId;
+        return true;
+    }, []);
+
+    const applyItemVoucherCode = useCallback(
+        (cartItem) => {
+            const code = itemVoucherCode.trim();
+            if (!code) return;
+            const match = (pricingPreview?.eligible_vouchers || []).find(
+                (v) => (v.code || "").toLowerCase() === code.toLowerCase(),
+            );
+            if (!match) {
+                toast.error(`Kode \"${code}\" tidak ditemukan atau tidak berlaku`);
+                return;
+            }
+            if (!voucherFitsCartItem(match, cartItem)) {
+                toast.error(`Voucher \"${match.code || match.name}\" tidak berlaku untuk barang ini`);
+                return;
+            }
+            addItemVoucher(cartItem.id, match.id);
+            setItemVoucherCode("");
+            toast.success(`Voucher \"${match.code || match.name}\" dipasang ke ${cartItem.product?.title || "barang ini"}`);
+        },
+        [itemVoucherCode, pricingPreview?.eligible_vouchers, voucherFitsCartItem, addItemVoucher],
+    );
+
+    // Buang voucher baris yang sudah tidak berlaku (promo habis/kedaluwarsa) atau barisnya sudah dihapus.
+    useEffect(() => {
+        const eligibleIds = new Set((pricingPreview?.eligible_vouchers || []).map((v) => String(v.id)));
+        const cartIds = new Set((carts || []).map((c) => String(c.id)));
+        setItemVouchers((prev) => {
+            let changed = false;
+            const next = {};
+            Object.entries(prev).forEach(([cartId, list]) => {
+                const kept = cartIds.has(String(cartId)) ? list.filter((id) => eligibleIds.has(id)) : [];
+                if (kept.length !== list.length) changed = true;
+                if (kept.length) next[cartId] = kept;
+            });
+            return changed ? next : prev;
+        });
+    }, [pricingPreview?.eligible_vouchers, carts]);
 
     // Payment options
     const paymentOptions = useMemo(() => {
@@ -731,6 +821,7 @@ export default function Index({
                 redeem_points: Number(redeemPointsInput || 0),
                 customer_voucher_ids: selectedVoucherIds,
                 item_discounts: itemDiscountsPayload,
+                item_vouchers: itemVouchersPayload,
                 shipping_cost: shipping,
                 grand_total: payable,
                 cash: isCashPayment ? (isDualPayment ? dualCash : cash) : payable,
@@ -775,6 +866,7 @@ export default function Index({
                         redeem_points: Number(redeemPointsInput || 0),
                         customer_voucher_ids: selectedVoucherIds,
                         item_discounts: itemDiscountsPayload,
+                        item_vouchers: itemVouchersPayload,
                         shipping_cost: shipping,
                         grand_total: payable,
                         cash: isCashPayment ? (isDualPayment ? dualCash : cash) : payable,
@@ -1099,6 +1191,15 @@ export default function Index({
                                                 );
                                             const draftDiscount =
                                                 itemDiscounts[item.id];
+                                            const lineVoucherIds = itemVouchers[item.id] || [];
+                                            const lineVoucherAmount = Number(
+                                                pricingPreview?.summary?.voucher_discount_by_cart_id?.[item.id] ?? 0,
+                                            );
+                                            const lineVoucherNames =
+                                                pricingPreview?.summary?.voucher_name_by_cart_id?.[item.id] || [];
+                                            const lineEligibleVouchers = (pricingPreview?.eligible_vouchers || []).filter(
+                                                (v) => voucherFitsCartItem(v, item),
+                                            );
 
                                             return (
                                                 <div
@@ -1172,6 +1273,16 @@ export default function Index({
                                                                     )}
                                                                 </p>
                                                             )}
+                                                            {lineVoucherAmount > 0 && (
+                                                                <p className="mt-0.5 text-[11px] font-medium text-emerald-600 dark:text-emerald-400">
+                                                                    Voucher {lineVoucherNames.join(", ")} -{formatPrice(lineVoucherAmount)}
+                                                                </p>
+                                                            )}
+                                                            {lineVoucherIds.length > 0 && lineVoucherAmount === 0 && !isLoadingPricing && (
+                                                                <p className="mt-0.5 text-[11px] font-medium text-amber-600">
+                                                                    Voucher belum memotong barang ini
+                                                                </p>
+                                                            )}
                                                         </div>
                                                     </div>
                                                     <div className="flex items-center gap-1">
@@ -1209,18 +1320,22 @@ export default function Index({
                                                             +
                                                         </button>
                                                         <button
-                                                            onClick={() =>
+                                                            onClick={() => {
+                                                                setItemDiscountTab(
+                                                                    lineVoucherIds.length > 0 ? "voucher" : "manual",
+                                                                );
+                                                                setItemVoucherCode("");
                                                                 setOpenItemDiscountCartId(
                                                                     openItemDiscountCartId ===
                                                                         item.id
                                                                         ? null
                                                                         : item.id,
-                                                                )
-                                                            }
+                                                                );
+                                                            }}
                                                             className={`w-6 h-6 rounded flex items-center justify-center ml-1 ${
                                                                 itemDiscounts[
                                                                     item.id
-                                                                ]?.value
+                                                                ]?.value || lineVoucherIds.length > 0
                                                                     ? "text-emerald-600 bg-emerald-50 dark:bg-emerald-950/40"
                                                                     : "text-slate-400 hover:text-primary-500 hover:bg-primary-50 dark:hover:bg-primary-950/50"
                                                             }`}
@@ -1251,6 +1366,25 @@ export default function Index({
                                                 </div>
                                                 {openItemDiscountCartId ===
                                                     item.id && (
+                                                    <div className="space-y-2 pb-2">
+                                                        <div className="mx-2 inline-flex rounded-lg border border-slate-200 dark:border-slate-700 overflow-hidden text-[11px]">
+                                                            {[["manual", "Diskon"], ["voucher", "Voucher"]].map(([tab, label]) => (
+                                                                <button
+                                                                    key={tab}
+                                                                    type="button"
+                                                                    onClick={() => setItemDiscountTab(tab)}
+                                                                    className={`px-3 py-1 ${
+                                                                        itemDiscountTab === tab
+                                                                            ? "bg-primary-600 text-white"
+                                                                            : "bg-white dark:bg-slate-800 text-slate-500"
+                                                                    }`}
+                                                                >
+                                                                    {label}
+                                                                </button>
+                                                            ))}
+                                                        </div>
+
+                                                        {itemDiscountTab === "manual" ? (
                                                     <div className="flex items-center gap-2 px-2 pb-2">
                                                         <div className="inline-flex rounded-lg border border-slate-200 dark:border-slate-700 overflow-hidden text-[11px]">
                                                             <button
@@ -1319,6 +1453,69 @@ export default function Index({
                                                         >
                                                             Hapus
                                                         </button>
+                                                    </div>
+                                                        ) : (
+                                                            <div className="px-2 space-y-2">
+                                                                <div className="flex items-center gap-2">
+                                                                    <input
+                                                                        value={itemVoucherCode}
+                                                                        onChange={(e) => setItemVoucherCode(e.target.value.toUpperCase())}
+                                                                        onKeyDown={(e) => {
+                                                                            if (e.key === "Enter") {
+                                                                                e.preventDefault();
+                                                                                applyItemVoucherCode(item);
+                                                                            }
+                                                                        }}
+                                                                        placeholder="Kode voucher"
+                                                                        className="flex-1 min-w-0 text-xs rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-2 py-1 uppercase"
+                                                                    />
+                                                                    <button
+                                                                        type="button"
+                                                                        onClick={() => applyItemVoucherCode(item)}
+                                                                        className="text-[11px] font-semibold rounded-lg bg-primary-600 text-white px-3 py-1"
+                                                                    >
+                                                                        Pakai
+                                                                    </button>
+                                                                </div>
+
+                                                                {lineVoucherIds.length > 0 && (
+                                                                    <div className="flex flex-wrap gap-1.5">
+                                                                        {[...new Set(lineVoucherIds)].map((id) => {
+                                                                            const v = (pricingPreview?.eligible_vouchers || []).find((x) => String(x.id) === id);
+                                                                            const count = lineVoucherIds.filter((x) => x === id).length;
+                                                                            return (
+                                                                                <span key={id} className="inline-flex items-center gap-1 rounded-full bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 text-[11px] font-medium pl-2 pr-1 py-0.5">
+                                                                                    {v?.code || v?.name || `#${id}`}
+                                                                                    {count > 1 ? ` ×${count}` : ""}
+                                                                                    <button type="button" onClick={() => removeItemVoucher(item.id, id)} className="w-4 h-4 rounded-full hover:bg-emerald-100 dark:hover:bg-emerald-900 leading-none" title="Kurangi / lepas">−</button>
+                                                                                </span>
+                                                                            );
+                                                                        })}
+                                                                    </div>
+                                                                )}
+
+                                                                {lineEligibleVouchers.length > 0 ? (
+                                                                    <div>
+                                                                        <p className="text-[10px] text-slate-400 mb-1">Voucher yang bisa dipakai di barang ini (tap untuk memasang)</p>
+                                                                        <div className="flex flex-wrap gap-1.5">
+                                                                            {lineEligibleVouchers.map((v) => (
+                                                                                <button
+                                                                                    key={v.id}
+                                                                                    type="button"
+                                                                                    onClick={() => addItemVoucher(item.id, v.id)}
+                                                                                    className="rounded-full border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-2 py-0.5 text-[11px] text-slate-600 dark:text-slate-300 hover:border-primary-400"
+                                                                                >
+                                                                                    {v.code || v.name}
+                                                                                    {Number(v.preview_discount) > 0 ? ` · -${formatPrice(v.preview_discount)}` : ""}
+                                                                                </button>
+                                                                            ))}
+                                                                        </div>
+                                                                    </div>
+                                                                ) : (
+                                                                    <p className="text-[10px] text-slate-400">Belum ada voucher aktif yang cocok untuk barang ini. Ketik kodenya di atas.</p>
+                                                                )}
+                                                            </div>
+                                                        )}
                                                     </div>
                                                 )}
                                                 </div>

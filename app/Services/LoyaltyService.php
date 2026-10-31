@@ -230,15 +230,38 @@ class LoyaltyService
         $voucherNameByCartId = [];
         $voucherPromoIdByCartId = [];
 
-        foreach ($manualPromos as $candidatePromo) {
-            $validated = $this->promoService->validateManualPromo($customer, $candidatePromo, $runningSubtotal, $at, $cartItems, $paymentMethod);
+        // Antrian voucher yang dihitung berurutan. Voucher yang DITEMPELKAN kasir ke 1 baris keranjang
+        // ("item_vouchers": kasir memilih sendiri barang yang didiskon) masuk lebih dulu dan hanya melihat
+        // baris itu. Voucher biasa (tanpa target) tetap menghitung seluruh keranjang seperti sebelumnya.
+        $promoQueue = [];
+        foreach (($options['item_vouchers'] ?? []) as $entry) {
+            $targetCartId = (int) data_get($entry, 'cart_id');
+            $targetPromo = data_get($entry, 'promo');
+            if (! $targetPromo instanceof Promo || $targetCartId <= 0) {
+                continue;
+            }
+            $scopedItems = collect($cartItems)
+                ->filter(fn ($item) => (int) data_get($item, 'cart_id') === $targetCartId)
+                ->values()
+                ->all();
+            if (empty($scopedItems)) {
+                continue;
+            }
+            $promoQueue[] = [$targetPromo, $scopedItems];
+        }
+        foreach ($manualPromos as $manualPromo) {
+            $promoQueue[] = [$manualPromo, $cartItems];
+        }
+
+        foreach ($promoQueue as [$candidatePromo, $entryItems]) {
+            $validated = $this->promoService->validateManualPromo($customer, $candidatePromo, $runningSubtotal, $at, $entryItems, $paymentMethod);
 
             if (! $validated) {
                 continue;
             }
 
             $beforeRemaining = $remainingByCartId;
-            $result = $this->promoService->calculateManualPromoDiscount($validated, $runningSubtotal, $cartItems, $remainingByCartId);
+            $result = $this->promoService->calculateManualPromoDiscount($validated, $runningSubtotal, $entryItems, $remainingByCartId);
             $lineDiscount = min($runningSubtotal, max(0, (int) $result['discount']));
 
             if ($lineDiscount <= 0 && empty($result['free_items'])) {
