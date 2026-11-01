@@ -14,9 +14,11 @@ import {
     IconWallet,
 } from "@tabler/icons-react";
 import Notification from "@/Components/Dashboard/Notification";
+import usePrintListener from "@/Hooks/usePrintListener";
 
 export default function POSLayout({ children }) {
     const { auth, storeProfile, activeCashierShift } = usePage().props;
+    usePrintListener(); // layar kasir = tempat kasir paling lama berada: print dari HP harus tetap jalan di sini
     const { darkMode, themeSwitcher } = useTheme();
     const [currentTime, setCurrentTime] = useState(new Date());
     const [showMobileMenu, setShowMobileMenu] = useState(false);

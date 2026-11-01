@@ -4,10 +4,12 @@ import Sidebar from "@/Components/Dashboard/Sidebar";
 import Navbar from "@/Components/Dashboard/Navbar";
 import { Toaster } from "react-hot-toast";
 import { useTheme } from "@/Context/ThemeSwitcherContext";
+import usePrintListener from "@/Hooks/usePrintListener";
 
 export default function AppLayout({ children }) {
     const { darkMode, themeSwitcher } = useTheme();
     const { auth, security } = usePage().props;
+    usePrintListener(); // print otomatis dari HP, di halaman dashboard mana pun
 
     const getInitialSidebarState = () => {
         if (typeof window === "undefined") return false;

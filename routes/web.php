@@ -313,8 +313,12 @@ Route::group(['prefix' => 'dashboard', 'middleware' => ['auth', 'verified']], fu
     // aging & reminders
     Route::get('/aging', [\App\Http\Controllers\Apps\AgingController::class, 'index'])->middleware('permission:receivables-access')->name('aging.index');
 
-    // print relay — HP kirim perintah, PC (tab listener) yang eksekusi via QZ Tray
+    // print relay — HP kirim perintah, PC kasir yang sedang membuka dashboard (QZ Tray menyala) yang eksekusi; /print-listener = riwayat print hari ini
     Route::get('/print-listener', [\App\Http\Controllers\PrintRelayController::class, 'listener'])->middleware('permission:transactions-access')->name('print-relay.listener');
+    Route::get('/print-relay/jobs', [\App\Http\Controllers\PrintRelayController::class, 'jobs'])->middleware('permission:transactions-access')->name('print-relay.jobs');
+    Route::get('/print-relay/pending', [\App\Http\Controllers\PrintRelayController::class, 'pending'])->middleware('permission:transactions-access')->name('print-relay.pending');
+    Route::post('/print-relay/jobs/{job}/claim', [\App\Http\Controllers\PrintRelayController::class, 'claim'])->middleware('permission:transactions-access')->name('print-relay.claim');
+    Route::post('/print-relay/jobs/{job}/finish', [\App\Http\Controllers\PrintRelayController::class, 'finish'])->middleware('permission:transactions-access')->name('print-relay.finish');
     Route::post('/print-relay/{invoice}', [\App\Http\Controllers\PrintRelayController::class, 'request'])->middleware('permission:transactions-access')->name('print-relay.request');
 
     Route::get('/profile', [ProfileController::class, 'edit'])->name('profile.edit');

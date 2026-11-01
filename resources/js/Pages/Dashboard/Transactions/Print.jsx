@@ -1,3 +1,4 @@
+import usePrintListener from "@/Hooks/usePrintListener";
 import React, { useMemo, useState } from "react";
 import { Head, Link, router, usePage } from "@inertiajs/react";
 import {
@@ -27,6 +28,7 @@ import { printReceiptViaQz } from "@/Utils/qzPrint";
 import toast from "react-hot-toast";
 
 export default function Print({ transaction, printSettings }) {
+    usePrintListener(); // halaman ini tidak punya layout; tetap ikut menerima print dari HP
     const { storeProfile } = usePage().props;
     const { can } = useAuthorization();
     const [printMode, setPrintMode] = useState(
@@ -200,7 +202,7 @@ export default function Print({ transaction, printSettings }) {
         }
     };
 
-    // Jalur 1: HP minta PC (tab /print-listener) yang eksekusi print via QZ Tray.
+    // Jalur 1: HP minta PC kasir (yang sedang membuka dashboard) yang eksekusi print via QZ Tray.
     const handleRemotePrint = async () => {
         const size = printMode === "thermal58" ? "58" : "80";
         setIsRemotePrinting(true);
@@ -210,7 +212,7 @@ export default function Print({ transaction, printSettings }) {
         } catch (err) {
             console.error("[RemotePrint] ERROR:", err);
             toast.error(
-                "Gagal kirim perintah print. Pastikan PC kasir sudah buka halaman /print-listener.",
+                "Gagal kirim perintah print. Pastikan PC kasir sedang membuka dashboard (sudah login) dan QZ Tray menyala.",
             );
         } finally {
             setIsRemotePrinting(false);

@@ -11,8 +11,8 @@ use Illuminate\Queue\SerializesModels;
 
 /**
  * Dipicu dari HP (browser) ketika user menekan tombol "Print dari HP".
- * PC kasir yang sedang membuka halaman /print-listener akan menerima event
- * ini lewat websocket (Reverb) dan otomatis mengirim struk ke QZ Tray.
+ * PC kasir yang sedang membuka dashboard (halaman apa pun, sudah login, QZ Tray menyala)
+ * menerima event ini lewat websocket (Reverb), mengklaim pekerjaannya, lalu mengirim struk ke QZ Tray.
  */
 class PrintJobRequested implements ShouldBroadcastNow
 {
@@ -22,6 +22,8 @@ class PrintJobRequested implements ShouldBroadcastNow
         public string $invoice,
         public string $size,
         public string $requestedBy,
+        public ?int $jobId = null,
+        public ?string $printerName = null,
     ) {}
 
     /**
@@ -43,6 +45,8 @@ class PrintJobRequested implements ShouldBroadcastNow
     public function broadcastWith(): array
     {
         return [
+            'job_id' => $this->jobId,
+            'printer_name' => $this->printerName,
             'invoice' => $this->invoice,
             'size' => $this->size,
             'requested_by' => $this->requestedBy,

@@ -2,6 +2,9 @@
 // Nilai default; nama printer sebenarnya diatur di Pengaturan → Printer.
 export const QZ_PRINTER_NAME = "POS-58";
 
+// Percobaan sambung ke QZ Tray yang sedang berjalan (dipakai bersama oleh semua pemanggil).
+let connecting = null;
+
 const withTimeout = (promise, label, ms = 10000) =>
     Promise.race([
         promise,
@@ -14,15 +17,10 @@ const withTimeout = (promise, label, ms = 10000) =>
     ]);
 
 /**
- * Kirim struk (invoice tertentu) ke printer lewat QZ Tray.
- * Dipakai dari halaman Print.jsx (klik manual) DAN dari PrintListener.jsx
- * (otomatis, dipicu event dari HP).
+ * Siapkan sertifikat + tanda tangan QZ lalu pastikan websocket ke QZ Tray tersambung.
+ * Melempar error kalau QZ Tray tidak jalan. Dipakai print manual DAN pendengar print otomatis.
  */
-export async function printReceiptViaQz({
-    invoice,
-    size = "58",
-    printerName,
-}) {
+export async function ensureQzConnected() {
     if (!window.qz) {
         throw new Error(
             "QZ Tray belum terdeteksi. Pastikan QZ Tray sudah jalan di komputer ini.",
@@ -63,8 +61,47 @@ export async function printReceiptViaQz({
     });
 
     if (!qz.websocket.isActive()) {
-        await withTimeout(qz.websocket.connect(), "connect websocket");
+        // Satu percobaan sambung pada satu waktu. Tanpa ini, pendengar otomatis & tombol Print manual yang
+        // berjalan bersamaan bisa saling bentrok ("connection attempt already in progress") dan print gagal.
+        if (!connecting) {
+            connecting = withTimeout(
+                qz.websocket.connect(),
+                "connect websocket",
+            ).finally(() => {
+                connecting = null;
+            });
+        }
+        await connecting;
     }
+
+    return qz;
+}
+
+/** Apakah printer dengan nama ini ada di komputer ini? (dipakai sebelum mengklaim pekerjaan print) */
+export async function qzHasPrinter(printerName) {
+    const qz = await ensureQzConnected();
+    try {
+        const found = await withTimeout(
+            qz.printers.find(printerName || QZ_PRINTER_NAME),
+            "cari printer",
+        );
+        return Boolean(found) && (!Array.isArray(found) || found.length > 0);
+    } catch (err) {
+        return false;
+    }
+}
+
+/**
+ * Kirim struk (invoice tertentu) ke printer lewat QZ Tray.
+ * Dipakai dari halaman Print.jsx (klik manual) DAN dari pendengar print otomatis
+ * (dipicu event dari HP, lihat Utils/printListenerRuntime.js).
+ */
+export async function printReceiptViaQz({
+    invoice,
+    size = "58",
+    printerName,
+}) {
+    const qz = await ensureQzConnected();
 
     const printer = await withTimeout(
         qz.printers.find(printerName || QZ_PRINTER_NAME),

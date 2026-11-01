@@ -102,6 +102,13 @@ export default function Menu() {
                     permissions: hasAnyPermission(["transactions-access"]),
                 },
                 {
+                    title: "Print Hari Ini",
+                    href: route("print-relay.listener"),
+                    active: url === "/dashboard/print-listener",
+                    icon: <IconPrinter size={20} strokeWidth={1.5} />,
+                    permissions: hasAnyPermission(["transactions-access"]),
+                },
+                {
                     title: "Riwayat Transaksi",
                     href: route("transactions.history"),
                     active:
