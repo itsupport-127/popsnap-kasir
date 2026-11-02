@@ -67,6 +67,7 @@ class CashierShiftController extends Controller
 
         return Inertia::render('Dashboard/CashierShifts/Show', [
             'cashierShift' => $this->transformShift($cashierShift),
+            'itemRecap' => $this->cashierShiftService->calculateItemRecap($cashierShift),
             'canForceClose' => $request->user()->isSuperAdmin() || $request->user()->can('cashier-shifts-force-close'),
             'canSendReportEmail' => $request->user()->isSuperAdmin() || $request->user()->can('cashier-shifts-close'),
             'reportRecipients' => $this->cashierShiftService->reportRecipients(),

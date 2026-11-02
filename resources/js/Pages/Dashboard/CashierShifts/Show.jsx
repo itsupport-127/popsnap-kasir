@@ -76,7 +76,85 @@ function ExpensePresetChips({ onPick }) {
     );
 }
 
-function PreviewModal({ open, onClose, summary, note, subject, dateLabel, storeLabel, cashierName, closedAt, shiftId }) {
+/**
+ * Rekap item terjual selama shift, dikelompokkan per kategori, lengkap dengan nominalnya
+ * (mis. "Emma's Room 12 = Rp 420.000"). Dipakai di halaman shift dan di preview email laporan.
+ * `salesTotal` = Total Penjualan shift; kalau beda dengan total nominal item, selisihnya ditampilkan.
+ */
+function ItemRecapTable({ recap, salesTotal = null }) {
+    const groups = recap?.groups ?? [];
+
+    if (groups.length === 0) {
+        return <p className="text-sm text-slate-500 dark:text-slate-400">Belum ada item terjual pada shift ini.</p>;
+    }
+
+    const showReturned = (recap.totals?.returned ?? 0) > 0;
+    const num = "px-3 py-2 text-right tabular-nums whitespace-nowrap";
+    const diff = salesTotal === null ? 0 : salesTotal - recap.totals.net_revenue;
+    const money = (value) => `${value < 0 ? "-" : ""}${formatCurrency(Math.abs(value))}`;
+
+    return (
+        <div className="overflow-x-auto rounded-xl border border-slate-200 dark:border-slate-800">
+            <table className="w-full text-sm">
+                <thead className="bg-slate-50 text-xs uppercase tracking-wide text-slate-500 dark:bg-slate-800/60 dark:text-slate-400">
+                    <tr>
+                        <th className="px-3 py-2 text-left font-semibold">Item</th>
+                        {showReturned && <th className="px-3 py-2 text-right font-semibold">Terjual</th>}
+                        {showReturned && <th className="px-3 py-2 text-right font-semibold">Retur</th>}
+                        <th className="px-3 py-2 text-right font-semibold">{showReturned ? "Bersih" : "Jumlah"}</th>
+                        <th className="px-3 py-2 text-right font-semibold">Nominal</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {groups.map((group) => (
+                        <React.Fragment key={group.category}>
+                            <tr className="bg-slate-100/70 dark:bg-slate-800/40">
+                                <td className="px-3 py-2 font-semibold text-slate-900 dark:text-white">{group.category}</td>
+                                {showReturned && <td className={`${num} font-semibold text-slate-900 dark:text-white`}>{group.qty}</td>}
+                                {showReturned && <td className={`${num} font-semibold text-amber-600`}>{group.returned || ""}</td>}
+                                <td className={`${num} font-semibold text-slate-900 dark:text-white`}>{group.net_qty}</td>
+                                <td className={`${num} font-semibold text-slate-900 dark:text-white`}>{money(group.net_revenue)}</td>
+                            </tr>
+                            {group.items.map((item) => (
+                                <tr key={item.product_id} className="border-t border-slate-100 dark:border-slate-800">
+                                    <td className="px-3 py-2 text-slate-700 dark:text-slate-300">
+                                        {item.title}
+                                        {!showReturned && item.returned > 0 && (
+                                            <span className="ml-1 text-xs text-amber-600">(retur {item.returned})</span>
+                                        )}
+                                    </td>
+                                    {showReturned && <td className={`${num} text-slate-600 dark:text-slate-400`}>{item.qty}</td>}
+                                    {showReturned && <td className={`${num} text-amber-600`}>{item.returned || ""}</td>}
+                                    <td className={`${num} font-semibold text-slate-900 dark:text-white`}>{item.net_qty}</td>
+                                    <td className={`${num} text-slate-600 dark:text-slate-400`}>{money(item.net_revenue)}</td>
+                                </tr>
+                            ))}
+                        </React.Fragment>
+                    ))}
+                </tbody>
+                <tfoot>
+                    <tr className="border-t border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-800/60">
+                        <td className="px-3 py-2 font-bold text-slate-900 dark:text-white">Total item terjual</td>
+                        {showReturned && <td className={`${num} font-bold text-slate-900 dark:text-white`}>{recap.totals.qty}</td>}
+                        {showReturned && <td className={`${num} font-bold text-amber-600`}>{recap.totals.returned}</td>}
+                        <td className={`${num} font-bold text-slate-900 dark:text-white`}>{recap.totals.net_qty}</td>
+                        <td className={`${num} font-bold text-slate-900 dark:text-white`}>{money(recap.totals.net_revenue)}</td>
+                    </tr>
+                    {diff !== 0 && (
+                        <tr>
+                            <td colSpan={showReturned ? 4 : 2} className="px-3 py-2 text-xs text-slate-400">
+                                Selisih dengan Total Penjualan (ongkir, retur, atau transaksi belum lunas)
+                            </td>
+                            <td className="px-3 py-2 text-right text-xs tabular-nums text-slate-400">{money(diff)}</td>
+                        </tr>
+                    )}
+                </tfoot>
+            </table>
+        </div>
+    );
+}
+
+function PreviewModal({ open, onClose, summary, recap, note, subject, dateLabel, storeLabel, cashierName, closedAt, shiftId }) {
     if (!open) return null;
 
     const row = (label, value, muted = false) => (
@@ -118,6 +196,11 @@ function PreviewModal({ open, onClose, summary, note, subject, dateLabel, storeL
                             {row("Total Penjualan", formatCurrency(summary.total))}
                             {row("Pengeluaran", formatCurrency(summary.expense), true)}
 
+                            <div className="mt-4">
+                                <p className="mb-2 text-[11px] uppercase tracking-wide text-slate-400">Item Terjual</p>
+                                <ItemRecapTable recap={recap} salesTotal={summary.total} />
+                            </div>
+
                             <div className="mt-4 rounded-lg bg-slate-50 p-3 dark:bg-slate-800/60">
                                 <p className="text-[11px] uppercase tracking-wide text-slate-400">Note</p>
                                 <p className="mt-1 whitespace-pre-line text-sm text-slate-700 dark:text-slate-300">
@@ -154,6 +237,7 @@ function PreviewModal({ open, onClose, summary, note, subject, dateLabel, storeL
 
 export default function Show({
     cashierShift,
+    itemRecap = null,
     canForceClose = false,
     canSendReportEmail = false,
     reportRecipients = [],
@@ -299,6 +383,7 @@ export default function Show({
                 open={showPreview}
                 onClose={() => setShowPreview(false)}
                 summary={previewSummary}
+                recap={itemRecap}
                 note={cashierShift.expense_notes}
                 subject={previewSubject}
                 dateLabel={previewDate}
@@ -636,6 +721,21 @@ export default function Show({
                             </div>
                         )}
                     </div>
+                </div>
+
+                <div className="rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
+                    <div className="flex flex-wrap items-baseline justify-between gap-2">
+                        <h2 className="text-lg font-semibold text-slate-900 dark:text-white">Rekap Item Terjual</h2>
+                        {itemRecap?.totals?.net_qty > 0 && (
+                            <p className="text-sm text-slate-500 dark:text-slate-400">
+                                {itemRecap.totals.net_qty} item · {itemRecap.totals.products} produk · {formatCurrency(itemRecap.totals.net_revenue)}
+                            </p>
+                        )}
+                    </div>
+                    <p className="mb-4 mt-1 text-xs text-slate-500 dark:text-slate-400">
+                        Semua barang yang terjual di shift ini (lunas dan piutang), per kategori, lengkap dengan nominal setelah diskon. Retur yang selesai di shift ini mengurangi jumlah dan nominal. Rekap yang sama ikut terkirim di email tutup kasir.
+                    </p>
+                    <ItemRecapTable recap={itemRecap} salesTotal={cashierShift.sales_grand_total} />
                 </div>
             </div>
         </>

@@ -3,6 +3,7 @@
 namespace App\Mail;
 
 use App\Models\CashierShift;
+use App\Services\CashierShiftService;
 use Illuminate\Bus\Queueable;
 use Illuminate\Mail\Mailable;
 use Illuminate\Mail\Mailables\Content;
@@ -77,6 +78,8 @@ class CashierShiftClosingReportMail extends Mailable
             'total' => $total,
             'expense' => $expense,
             'note' => $shift->expense_notes,
+            // Rekap item terjual (per kategori) supaya penerima laporan langsung tahu paket apa saja yang laku.
+            'items' => app(CashierShiftService::class)->calculateItemRecap($shift),
         ];
     }
 }

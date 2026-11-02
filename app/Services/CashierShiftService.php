@@ -4,8 +4,11 @@ namespace App\Services;
 
 use App\Mail\CashierShiftClosingReportMail;
 use App\Models\CashierShift;
+use App\Models\Product;
 use App\Models\SalesReturn;
+use App\Models\SalesReturnItem;
 use App\Models\Transaction;
+use App\Models\TransactionDetail;
 use App\Models\User;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\DB;
@@ -120,6 +123,137 @@ class CashierShiftService
             'transactions_count' => $transactionsCount,
             'sales_returns_count' => $salesReturnsCount,
             'expected_cash' => $expectedCash,
+        ];
+    }
+
+    /** Status pembayaran yang dihitung sebagai "terjual" di rekap item (paid + pay later). Gateway yang masih pending tidak. */
+    public const RECAP_PAYMENT_STATUSES = ['paid', 'unpaid'];
+
+    /**
+     * Rekap item yang terjual selama satu shift, dikelompokkan per kategori:
+     * mis. "Emma's Room 12 paket, Jason's SnapBox 8 paket" lengkap dengan nominalnya.
+     *
+     * - qty / returned / net_qty : jumlah terjual, diretur (retur selesai di shift ini), dan bersihnya.
+     *   Retur untuk barang yang dijual di shift lain tetap muncul supaya laci kas dan rekap barang cocok.
+     * - revenue        : nominal terjual setelah SEMUA diskon: promo, voucher, diskon manual per item, lalu
+     *                    diskon manual level transaksi dan tebusan poin yang dibagi proporsional ke tiap item
+     *                    (cara yang sama dengan perhitungan profit). Ongkir tidak ikut.
+     * - returned_value : nilai retur (subtotal item retur)
+     * - net_revenue    : revenue - returned_value
+     *
+     * @return array{groups: array<int, array<string, mixed>>, totals: array<string, int>}
+     */
+    public function calculateItemRecap(CashierShift $shift): array
+    {
+        $details = TransactionDetail::query()
+            ->join('transactions', 'transactions.id', '=', 'transaction_details.transaction_id')
+            ->where('transactions.cashier_shift_id', $shift->id)
+            ->whereIn('transactions.payment_status', self::RECAP_PAYMENT_STATUSES)
+            ->orderBy('transaction_details.transaction_id')
+            ->orderBy('transaction_details.id')
+            ->get([
+                'transaction_details.transaction_id',
+                'transaction_details.product_id',
+                'transaction_details.qty',
+                'transaction_details.price',
+                'transaction_details.voucher_discount',
+                'transaction_details.item_manual_discount',
+                'transactions.discount as trx_discount',
+                'transactions.loyalty_discount_total as trx_loyalty',
+            ]);
+
+        $soldQty = [];
+        $soldValue = [];
+
+        foreach ($details->groupBy('transaction_id') as $lines) {
+            $lines = $lines->values();
+            $after = $lines->map(fn ($line) => max(
+                0,
+                (int) $line->price - (int) $line->voucher_discount - (int) $line->item_manual_discount
+            ))->all();
+            $afterSum = array_sum($after);
+
+            // Diskon level transaksi + tebusan poin dibagi proporsional; baris terakhir menampung sisa
+            // pembulatan supaya jumlah semua item persis sama dengan yang dibayar pelanggan (di luar ongkir).
+            $transactionDiscount = min($afterSum, max(0, (int) $lines[0]->trx_discount + (int) $lines[0]->trx_loyalty));
+            $allocated = 0;
+            $lastIndex = $lines->count() - 1;
+
+            foreach ($lines as $index => $line) {
+                $share = 0;
+                if ($afterSum > 0 && $transactionDiscount > 0) {
+                    $share = $index === $lastIndex
+                        ? max(0, $transactionDiscount - $allocated)
+                        : (int) round($transactionDiscount * $after[$index] / $afterSum);
+                    $allocated += $share;
+                }
+
+                $productId = (int) $line->product_id;
+                $soldQty[$productId] = ($soldQty[$productId] ?? 0) + (int) $line->qty;
+                $soldValue[$productId] = ($soldValue[$productId] ?? 0) + max(0, $after[$index] - $share);
+            }
+        }
+
+        $returned = SalesReturnItem::query()
+            ->join('sales_returns', 'sales_returns.id', '=', 'sales_return_items.sales_return_id')
+            ->where('sales_returns.cashier_shift_id', $shift->id)
+            ->where('sales_returns.status', 'completed')
+            ->groupBy('sales_return_items.product_id')
+            ->selectRaw('sales_return_items.product_id as product_id, SUM(sales_return_items.qty_return) as qty, SUM(sales_return_items.subtotal) as value')
+            ->get()
+            ->keyBy('product_id');
+
+        $productIds = collect(array_keys($soldQty))->merge($returned->keys())->map(fn ($id) => (int) $id)->unique()->values();
+
+        $products = Product::withTrashed()
+            ->with('category:id,name')
+            ->whereIn('id', $productIds)
+            ->get(['id', 'title', 'category_id'])
+            ->keyBy('id');
+
+        $items = $productIds->map(function ($productId) use ($soldQty, $soldValue, $returned, $products) {
+            $product = $products->get($productId);
+            $qty = (int) ($soldQty[$productId] ?? 0);
+            $returnedQty = (int) ($returned->get($productId)->qty ?? 0);
+            $revenue = (int) ($soldValue[$productId] ?? 0);
+            $returnedValue = (int) ($returned->get($productId)->value ?? 0);
+
+            return [
+                'product_id' => $productId,
+                'title' => $product?->title ?? 'Produk #'.$productId,
+                'category' => $product?->category?->name ?? 'Tanpa kategori',
+                'qty' => $qty,
+                'returned' => $returnedQty,
+                'net_qty' => $qty - $returnedQty,
+                'revenue' => $revenue,
+                'returned_value' => $returnedValue,
+                'net_revenue' => $revenue - $returnedValue,
+            ];
+        });
+
+        $sum = fn ($collection) => [
+            'qty' => (int) $collection->sum('qty'),
+            'returned' => (int) $collection->sum('returned'),
+            'net_qty' => (int) $collection->sum('net_qty'),
+            'revenue' => (int) $collection->sum('revenue'),
+            'returned_value' => (int) $collection->sum('returned_value'),
+            'net_revenue' => (int) $collection->sum('net_revenue'),
+        ];
+
+        $groups = $items
+            ->groupBy('category')
+            ->map(function ($categoryItems, $category) use ($sum) {
+                $sorted = $categoryItems->sortBy([['net_qty', 'desc'], ['title', 'asc']])->values();
+
+                return ['category' => (string) $category, ...$sum($sorted), 'items' => $sorted->all()];
+            })
+            ->sortBy([['net_qty', 'desc'], ['category', 'asc']])
+            ->values()
+            ->all();
+
+        return [
+            'groups' => $groups,
+            'totals' => [...$sum($items), 'products' => $items->count()],
         ];
     }
 
