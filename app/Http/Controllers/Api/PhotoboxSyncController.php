@@ -35,6 +35,38 @@ class PhotoboxSyncController extends Controller
     }
 
     /**
+     * Laporan status dari app Photobox (tiap ±1 menit): antrean kirim, error, galeri, ruang disk.
+     * Isinya dibersihkan dan dibatasi supaya aman; booth versi lama yang belum mengirim ini tetap terbaca online lewat /ping dan /changes.
+     */
+    public function heartbeat(Request $request): JsonResponse
+    {
+        $studio = $this->studio($request);
+        if (! $studio) {
+            return response()->json(['ok' => false, 'error' => 'Token tidak valid atau studio nonaktif.'], 401);
+        }
+
+        $int = fn ($v) => max(0, min(1000000, (int) $v));
+        $str = fn ($v, int $n = 300) => mb_substr(trim((string) ($v ?? '')), 0, $n);
+        $in = $request->all();
+        $disk = $in['diskLevel'] ?? 'ok';
+        $report = [
+            'pending' => $int($in['pending'] ?? 0),
+            'errors' => $int($in['errors'] ?? 0),
+            'lastError' => $str($in['lastError'] ?? ''),
+            'lastSessionAt' => isset($in['lastSessionAt']) && is_numeric($in['lastSessionAt']) ? (int) $in['lastSessionAt'] : null,
+            'galleryPending' => $int($in['galleryPending'] ?? 0),
+            'galleryErrors' => $int($in['galleryErrors'] ?? 0),
+            'galleryLastError' => $str($in['galleryLastError'] ?? ''),
+            'diskFreeGB' => isset($in['diskFreeGB']) && is_numeric($in['diskFreeGB']) ? round((float) $in['diskFreeGB'], 1) : null,
+            'diskLevel' => in_array($disk, ['ok', 'low', 'critical'], true) ? $disk : 'ok',
+            'app' => $str($in['app'] ?? 'photobox', 20),
+        ];
+        $studio->forceFill(['sync_report' => $report, 'report_at' => now(), 'last_seen_at' => now()])->save();
+
+        return response()->json(['ok' => true]);
+    }
+
+    /**
      * Perubahan yang dibuat di kasir (edit / hapus) untuk studio ini, supaya booth ikut menyesuaikan.
      * Booth menarik (polling) karena booth di belakang jaringan lokal. Parameter ?since=<cursor> dari jawaban sebelumnya.
      * Aman diulang: booth menerapkan perubahan yang sama berkali-kali tanpa efek ganda.

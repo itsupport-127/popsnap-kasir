@@ -17,6 +17,7 @@ class PhotoboxSyncTest extends TestCase
         $this->artisan('migrate', ['--path' => 'database/migrations/2026_10_22_000100_create_photobox_tables.php', '--force' => true]);
         $this->artisan('migrate', ['--path' => 'database/migrations/2026_10_26_000100_add_soft_delete_and_edit_to_photobox_transactions.php', '--force' => true]);
         $this->artisan('migrate', ['--path' => 'database/migrations/2026_10_27_000100_add_gallery_url_to_photobox_transactions.php', '--force' => true]);
+        $this->artisan('migrate', ['--path' => 'database/migrations/2026_11_03_000100_add_sync_report_to_photobox_studios.php', '--force' => true]);
     }
 
     private function studio(string $name = 'Studio Emma'): array
@@ -226,5 +227,58 @@ class PhotoboxSyncTest extends TestCase
         $this->assertSame([35000, 3000, 7000], array_column($out, 'total'));
 
         $this->assertSame($store, $merge->invoke(new \App\Http\Controllers\DashboardController(), $store, [], 'month'));
+    }
+
+    public function test_heartbeat_stores_report_and_summarizes_status(): void
+    {
+        [$studio, $token] = $this->studio();
+
+        $this->postJson('/api/photobox/heartbeat', ['pending' => 1])->assertStatus(401);
+
+        $this->withToken($token)->postJson('/api/photobox/heartbeat', [
+            'pending' => 0, 'errors' => 0, 'galleryPending' => 0, 'galleryErrors' => 0, 'diskFreeGB' => 120.44, 'diskLevel' => 'ok', 'app' => 'photobox',
+        ])->assertOk()->assertJson(['ok' => true]);
+        $studio->refresh();
+        $this->assertNotNull($studio->report_at);
+        $this->assertSame('ok', $studio->reportSummary()['state']);
+        $this->assertSame(120.4, $studio->sync_report['diskFreeGB']);
+
+        $this->withToken($token)->postJson('/api/photobox/heartbeat', ['pending' => 2, 'galleryPending' => 3])->assertOk();
+        $this->assertSame('queue', $studio->refresh()->reportSummary()['state']);
+
+        $this->withToken($token)->postJson('/api/photobox/heartbeat', ['errors' => 1, 'lastError' => str_repeat('x', 900)])->assertOk();
+        $studio->refresh();
+        $this->assertSame('warn', $studio->reportSummary()['state']);
+        $this->assertSame(300, mb_strlen($studio->sync_report['lastError']));
+
+        $this->withToken($token)->postJson('/api/photobox/heartbeat', ['galleryErrors' => 2, 'galleryLastError' => 'Bucket 403'])->assertOk();
+        $this->assertStringContainsString('Bucket 403', implode(' ', $studio->refresh()->reportSummary()['notes']));
+
+        $this->withToken($token)->postJson('/api/photobox/heartbeat', ['diskLevel' => 'critical', 'diskFreeGB' => 0.5, 'errors' => -5, 'pending' => 'abc'])->assertOk();
+        $studio->refresh();
+        $this->assertSame('bad', $studio->reportSummary()['state']);
+        $this->assertSame(0, $studio->sync_report['errors']);
+        $this->assertSame(0, $studio->sync_report['pending']);
+
+        $this->withToken($token)->postJson('/api/photobox/heartbeat', ['diskLevel' => '<script>'])->assertOk();
+        $this->assertSame('ok', $studio->refresh()->sync_report['diskLevel']);
+    }
+
+    public function test_status_offline_unknown_and_inactive(): void
+    {
+        [$studio, $token] = $this->studio();
+        $this->assertSame('unknown', $studio->reportSummary()['state']); // belum pernah terhubung
+
+        $this->withToken($token)->getJson('/api/photobox/ping')->assertOk(); // online tapi belum kirim laporan (app lama)
+        $this->assertSame('unknown', $studio->refresh()->reportSummary()['state']);
+        $this->assertStringContainsString('perlu diperbarui', implode(' ', $studio->reportSummary()['notes']));
+
+        $this->withToken($token)->postJson('/api/photobox/heartbeat', ['pending' => 0])->assertOk();
+        Carbon::setTestNow(now()->addMinutes(6));
+        $this->assertSame('offline', $studio->refresh()->reportSummary()['state']);
+        Carbon::setTestNow();
+
+        $studio->update(['is_active' => false]);
+        $this->withToken($token)->postJson('/api/photobox/heartbeat', ['pending' => 0])->assertStatus(401);
     }
 }

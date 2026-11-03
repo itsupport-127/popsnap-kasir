@@ -107,6 +107,7 @@ class PhotoboxTransactionController extends Controller
                 'is_active' => $s->is_active,
                 'token_hint' => $s->token_hint,
                 'last_seen_at' => $s->last_seen_at?->toIso8601String(),
+                'status' => $s->reportSummary(),
             ]),
             'galleryStatusOn' => GalleryStatus::baseUrl() !== null,
             'canManage' => $canManage,

@@ -9,6 +9,15 @@ import { IconBrandWhatsapp, IconCamera, IconChevronDown, IconCopy, IconExternalL
 
 const rupiah = (v = 0) =>
     new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", minimumFractionDigits: 0 }).format(v);
+// Status booth dari laporan heartbeat: titik warna + label singkat; catatan rinci tampil sebagai baris kecil di bawahnya.
+const BOOTH_STATE = {
+    ok: ["bg-emerald-500", "text-emerald-700", "Lancar"],
+    queue: ["bg-sky-500", "text-sky-700", "Ada antrean"],
+    warn: ["bg-amber-500", "text-amber-700", "Perlu dicek"],
+    bad: ["bg-rose-500", "text-rose-700", "Bermasalah"],
+    offline: ["bg-slate-400", "text-slate-500", "Offline"],
+    unknown: ["bg-slate-300", "text-slate-500", "Belum ada laporan"],
+};
 const dt = (v) =>
     v ? new Intl.DateTimeFormat("id-ID", { dateStyle: "medium", timeStyle: "short", timeZone: "Asia/Jakarta" }).format(new Date(v)) : "-";
 
@@ -198,6 +207,12 @@ export default function Index({ filters, range, transactions, summary, studios, 
                                 <div>
                                     <p className="font-medium text-slate-800 dark:text-slate-200">{s.name} {!s.is_active && <span className="ml-1 rounded-full bg-slate-200 px-2 py-0.5 text-xs">nonaktif</span>}</p>
                                     <p className="text-xs text-slate-500">Token …{s.token_hint || "----"} · terakhir terhubung: {dt(s.last_seen_at)}</p>
+                                    {s.is_active && s.status && (() => { const [dot, txt, label] = BOOTH_STATE[s.status.state] || BOOTH_STATE.unknown; return (
+                                        <div className="mt-1" data-testid="booth-status">
+                                            <span className={`inline-flex items-center gap-1.5 text-xs font-semibold ${txt}`}><span className={`h-2 w-2 rounded-full ${dot}`} />{label}</span>
+                                            {s.status.notes?.map((n, i) => <p key={i} className="text-xs text-slate-500">{n}</p>)}
+                                        </div>
+                                    ); })()}
                                 </div>
                                 {canManage && (
                                     <div className="flex gap-2">
