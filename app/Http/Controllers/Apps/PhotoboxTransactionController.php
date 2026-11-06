@@ -66,6 +66,7 @@ class PhotoboxTransactionController extends Controller
                 'gallery_url' => $t->gallery_url,
                 'booth_created_at' => $t->booth_created_at?->toIso8601String(),
                 'kasir_reference' => $t->meta['kasir_reference'] ?? null,
+                'meta' => ['wa_number' => $t->meta['wa_number'] ?? null, 'wa_name' => $t->meta['wa_name'] ?? null],
             ]);
 
         // Status galeri (terupload / izin foto) + nomor WhatsApp pelanggan dari transaksi kasir
@@ -81,8 +82,13 @@ class PhotoboxTransactionController extends Controller
             $r['gallery_state'] = ! $r['gallery_url'] ? null : (! $g ? 'unknown' : (! empty($g['expired']) ? 'expired' : (($g['files'] ?? 0) > 0 ? 'uploaded' : 'pending')));
             $r['gallery_files'] = $g['files'] ?? 0;
             $r['social'] = $g['social'] ?? null;
-            $r['customer_name'] = $cust?->name;
-            $r['customer_wa'] = GalleryStatus::waNumber($cust?->no_telp);
+            // Kontak yang diisi manual oleh CS (tersimpan di transaksi photobox) didahulukan; kalau kosong pakai data pelanggan kasir
+            $meta = $r['meta'] ?? [];
+            $manualWa = GalleryStatus::waNumber($meta['wa_number'] ?? null);
+            $r['customer_name'] = ($manualWa ? ($meta['wa_name'] ?? null) : null) ?: $cust?->name;
+            $r['customer_wa'] = $manualWa ?: GalleryStatus::waNumber($cust?->no_telp);
+            $r['customer_manual'] = (bool) $manualWa;
+            unset($r['meta']);
             unset($r['kasir_reference']);
 
             return $r;
@@ -107,7 +113,6 @@ class PhotoboxTransactionController extends Controller
                 'is_active' => $s->is_active,
                 'token_hint' => $s->token_hint,
                 'last_seen_at' => $s->last_seen_at?->toIso8601String(),
-                'status' => $s->reportSummary(),
             ]),
             'galleryStatusOn' => GalleryStatus::baseUrl() !== null,
             'canManage' => $canManage,
@@ -120,6 +125,44 @@ class PhotoboxTransactionController extends Controller
     }
 
     /** Ubah transaksi. Ringkasan & dashboard dihitung dari tabel ini, jadi pendapatan otomatis ikut menyesuaikan. */
+    /** Cari pelanggan kasir (nama / nomor) untuk mengisi kontak WhatsApp. Hanya nama + nomor yang dikembalikan. */
+    public function customerSearch(Request $request): \Illuminate\Http\JsonResponse
+    {
+        $q = trim((string) $request->query('q', ''));
+        if (mb_strlen($q) < 2) {
+            return response()->json([]);
+        }
+        $like = '%'.str_replace(['%', '_'], ['\\%', '\\_'], $q).'%';
+        $rows = \App\Models\Customer::query()->select('id', 'name', 'no_telp')
+            ->where(fn ($w) => $w->where('name', 'like', $like)->orWhere('no_telp', 'like', $like))
+            ->orderBy('name')->limit(8)->get()
+            ->map(fn ($c) => ['id' => $c->id, 'name' => $c->name, 'wa' => GalleryStatus::waNumber($c->no_telp), 'no_telp' => $c->no_telp])
+            ->filter(fn ($c) => $c['wa'])->values();
+
+        return response()->json($rows);
+    }
+
+    /** Simpan nama + nomor WhatsApp tamu untuk satu transaksi photobox (kosongkan nomor = hapus). Tidak mengubah data kasir. */
+    public function saveContact(Request $request, PhotoboxTransaction $transaction): RedirectResponse
+    {
+        $data = $request->validate(['name' => 'nullable|string|max:80', 'wa' => 'nullable|string|max:30']);
+        $wa = GalleryStatus::waNumber($data['wa'] ?? null);
+        if (! empty($data['wa']) && ! $wa) {
+            return back()->withErrors(['wa' => 'Nomor WhatsApp tidak valid.']);
+        }
+        $meta = $transaction->meta ?? [];
+        if ($wa) {
+            $meta['wa_number'] = $wa;
+            $meta['wa_name'] = trim((string) ($data['name'] ?? '')) ?: null;
+        } else {
+            unset($meta['wa_number'], $meta['wa_name']);
+        }
+        $transaction->meta = $meta;
+        $transaction->save();
+
+        return back();
+    }
+
     public function update(Request $request, PhotoboxTransaction $transaction): RedirectResponse
     {
         $data = $request->validate([

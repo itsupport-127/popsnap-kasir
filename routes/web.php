@@ -116,6 +116,8 @@ Route::group(['prefix' => 'dashboard', 'middleware' => ['auth', 'verified']], fu
     Route::get('stock-mutations', [StockMutationController::class, 'index'])->middleware('permission:stock-mutations-access')->name('stock-mutations.index');
     // Transaksi Photobox (sinkron dari app booth) + kelola studio/token
     Route::get('photobox-transactions', [PhotoboxTransactionController::class, 'index'])->middleware('permission:photobox-access')->name('photobox-transactions.index');
+    Route::get('photobox-customers', [PhotoboxTransactionController::class, 'customerSearch'])->middleware('permission:photobox-access')->name('photobox-customers.search');
+    Route::put('photobox-transactions/{transaction}/contact', [PhotoboxTransactionController::class, 'saveContact'])->middleware('permission:photobox-access')->name('photobox-transactions.contact');
     Route::put('photobox-transactions/{transaction}', [PhotoboxTransactionController::class, 'update'])->middleware('permission:photobox-edit')->name('photobox-transactions.update');
     Route::delete('photobox-transactions/{transaction}', [PhotoboxTransactionController::class, 'destroy'])->middleware('permission:photobox-delete')->name('photobox-transactions.destroy');
     Route::post('photobox-studios', [PhotoboxTransactionController::class, 'storeStudio'])->middleware('permission:photobox-manage')->name('photobox-studios.store');
@@ -313,12 +315,8 @@ Route::group(['prefix' => 'dashboard', 'middleware' => ['auth', 'verified']], fu
     // aging & reminders
     Route::get('/aging', [\App\Http\Controllers\Apps\AgingController::class, 'index'])->middleware('permission:receivables-access')->name('aging.index');
 
-    // print relay — HP kirim perintah, PC kasir yang sedang membuka dashboard (QZ Tray menyala) yang eksekusi; /print-listener = riwayat print hari ini
+    // print relay — HP kirim perintah, PC (tab listener) yang eksekusi via QZ Tray
     Route::get('/print-listener', [\App\Http\Controllers\PrintRelayController::class, 'listener'])->middleware('permission:transactions-access')->name('print-relay.listener');
-    Route::get('/print-relay/jobs', [\App\Http\Controllers\PrintRelayController::class, 'jobs'])->middleware('permission:transactions-access')->name('print-relay.jobs');
-    Route::get('/print-relay/pending', [\App\Http\Controllers\PrintRelayController::class, 'pending'])->middleware('permission:transactions-access')->name('print-relay.pending');
-    Route::post('/print-relay/jobs/{job}/claim', [\App\Http\Controllers\PrintRelayController::class, 'claim'])->middleware('permission:transactions-access')->name('print-relay.claim');
-    Route::post('/print-relay/jobs/{job}/finish', [\App\Http\Controllers\PrintRelayController::class, 'finish'])->middleware('permission:transactions-access')->name('print-relay.finish');
     Route::post('/print-relay/{invoice}', [\App\Http\Controllers\PrintRelayController::class, 'request'])->middleware('permission:transactions-access')->name('print-relay.request');
 
     Route::get('/profile', [ProfileController::class, 'edit'])->name('profile.edit');

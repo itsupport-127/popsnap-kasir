@@ -9,15 +9,6 @@ import { IconBrandWhatsapp, IconCamera, IconChevronDown, IconCopy, IconExternalL
 
 const rupiah = (v = 0) =>
     new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", minimumFractionDigits: 0 }).format(v);
-// Status booth dari laporan heartbeat: titik warna + label singkat; catatan rinci tampil sebagai baris kecil di bawahnya.
-const BOOTH_STATE = {
-    ok: ["bg-emerald-500", "text-emerald-700", "Lancar"],
-    queue: ["bg-sky-500", "text-sky-700", "Ada antrean"],
-    warn: ["bg-amber-500", "text-amber-700", "Perlu dicek"],
-    bad: ["bg-rose-500", "text-rose-700", "Bermasalah"],
-    offline: ["bg-slate-400", "text-slate-500", "Offline"],
-    unknown: ["bg-slate-300", "text-slate-500", "Belum ada laporan"],
-};
 const dt = (v) =>
     v ? new Intl.DateTimeFormat("id-ID", { dateStyle: "medium", timeStyle: "short", timeZone: "Asia/Jakarta" }).format(new Date(v)) : "-";
 
@@ -33,10 +24,11 @@ const copyText = async (text, okMsg = "Link disalin") => {
     toast.success(okMsg);
 };
 // Sapaan WhatsApp otomatis. Nomor pelanggan diambil dari transaksi kasir (kalau ada), kalau tidak ada CS pilih sendiri kontaknya.
-const waLink = (t) => {
-    const hai = t.customer_name ? `Hii ${t.customer_name}!` : "Hii kak!";
+const waLink = (t, c = null) => {
+    const name = c ? c.name : t.customer_name, wa = c ? c.wa : t.customer_wa;
+    const hai = name ? `Hii ${name}!` : "Hii kak!";
     const text = `${hai} Thanks for stopping by Popsnap! 📸\nHere's your photobox soft file:\n${t.gallery_url}\n\nHope you had tons of fun, come again soon! 💛`;
-    return `https://wa.me/${t.customer_wa || ""}?text=${encodeURIComponent(text)}`;
+    return `https://wa.me/${wa || ""}?text=${encodeURIComponent(text)}`;
 };
 const GALLERY_BADGE = {
     uploaded: ["Terupload", "bg-emerald-100 text-emerald-700"],
@@ -80,10 +72,75 @@ function Stat({ label, value, sub }) {
     );
 }
 
+// Kirim link galeri lewat WhatsApp: isi manual nama + nomor, atau cari dari data pelanggan kasir. Izin foto tamu tidak berpengaruh ke sini.
+function WaContactModal({ t, onClose }) {
+    const [name, setName] = useState(t.customer_name || "");
+    const [wa, setWa] = useState(t.customer_wa ? `+${t.customer_wa}` : "");
+    const [q, setQ] = useState("");
+    const [found, setFound] = useState([]);
+    const [err, setErr] = useState("");
+    useEffect(() => {
+        if (q.trim().length < 2) { setFound([]); return; }
+        const ctl = new AbortController();
+        const id = setTimeout(() => {
+            fetch(route("photobox-customers.search", { q: q.trim() }), { headers: { Accept: "application/json" }, signal: ctl.signal })
+                .then((r) => (r.ok ? r.json() : [])).then(setFound).catch(() => {});
+        }, 250);
+        return () => { clearTimeout(id); ctl.abort(); };
+    }, [q]);
+    const digits = wa.replace(/\D+/g, "");
+    const valid = digits.length >= 9 && digits.length <= 15;
+    const norm = () => (digits.startsWith("62") ? digits : digits.startsWith("0") ? `62${digits.slice(1)}` : `62${digits}`);
+    const send = (save) => {
+        if (!valid) { setErr("Nomor WhatsApp belum benar."); return; }
+        const c = { name: name.trim(), wa: norm() };
+        window.open(waLink(t, c), "_blank", "noopener,noreferrer"); // dibuka langsung di klik supaya tidak diblokir browser
+        if (save) router.put(route("photobox-transactions.contact", t.id), { name: c.name, wa: c.wa }, { preserveScroll: true, preserveState: true, onSuccess: () => toast.success("Kontak tersimpan") });
+        onClose();
+    };
+    const clear = () => router.put(route("photobox-transactions.contact", t.id), { name: "", wa: "" }, { preserveScroll: true, preserveState: true, onSuccess: () => { toast.success("Kontak manual dihapus"); onClose(); } });
+    return (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
+            <div className="w-full max-w-md rounded-2xl bg-white p-5 shadow-xl dark:bg-slate-900" onClick={(e) => e.stopPropagation()}>
+                <div className="mb-3 flex items-center justify-between">
+                    <h3 className="font-bold text-slate-900 dark:text-white">Kirim link via WhatsApp</h3>
+                    <button type="button" onClick={onClose} className="text-slate-400 hover:text-slate-600"><IconX size={18} /></button>
+                </div>
+                <label className="block text-sm">
+                    <span className="mb-1 block text-slate-600 dark:text-slate-300">Cari pelanggan (nama / nomor)</span>
+                    <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Ketik minimal 2 huruf…" className={`${field} w-full`} />
+                </label>
+                {found.length > 0 && (
+                    <div className="mt-1 max-h-40 overflow-auto rounded-xl border border-slate-200 dark:border-slate-700">
+                        {found.map((c) => (
+                            <button key={c.id} type="button" onClick={() => { setName(c.name || ""); setWa(`+${c.wa}`); setQ(""); setFound([]); setErr(""); }} className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-sm hover:bg-slate-50 dark:hover:bg-slate-800">
+                                <span className="font-medium text-slate-800 dark:text-slate-100">{c.name || "(tanpa nama)"}</span><span className="text-xs text-slate-500">+{c.wa}</span>
+                            </button>
+                        ))}
+                    </div>
+                )}
+                <div className="mt-3 grid grid-cols-2 gap-3">
+                    <label className="block text-sm"><span className="mb-1 block text-slate-600 dark:text-slate-300">Nama</span><input value={name} onChange={(e) => setName(e.target.value)} placeholder="Nama tamu" className={`${field} w-full`} /></label>
+                    <label className="block text-sm"><span className="mb-1 block text-slate-600 dark:text-slate-300">Nomor WhatsApp</span><input value={wa} onChange={(e) => { setWa(e.target.value); setErr(""); }} inputMode="tel" placeholder="08xxxxxxxxxx" className={`${field} w-full`} /></label>
+                </div>
+                {err && <p className="mt-2 text-xs text-rose-600">{err}</p>}
+                <p className="mt-2 text-xs text-slate-500">Boleh dikirim walau tamu tidak memberi izin foto untuk sosmed / mading. Nomor 08… otomatis jadi +62.</p>
+                <div className="mt-4 flex flex-wrap justify-end gap-2">
+                    {t.customer_manual && <button type="button" onClick={clear} className="mr-auto rounded-xl px-3 py-2 text-xs text-rose-600 hover:bg-rose-50">Hapus kontak manual</button>}
+                    <button type="button" onClick={() => { window.open(waLink(t, { name: "", wa: "" }), "_blank", "noopener,noreferrer"); onClose(); }} className="rounded-xl border border-slate-200 px-3 py-2 text-xs font-medium text-slate-600 dark:border-slate-700 dark:text-slate-300">Pilih kontak di WhatsApp</button>
+                    <button type="button" onClick={() => send(false)} className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700">Kirim saja</button>
+                    <button type="button" onClick={() => send(true)} className="rounded-xl bg-emerald-600 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-700">Simpan &amp; kirim</button>
+                </div>
+            </div>
+        </div>
+    );
+}
+
 export default function Index({ filters, range, transactions, summary, studios, galleryStatusOn, canManage, canEdit, canDelete, apiUrl, newToken, newTokenStudio }) {
     const [showStudios, setShowStudios] = useState(!!newToken || studios.length === 0);
     const form = useForm({ name: "" });
     const [editing, setEditing] = useState(null);
+    const [waFor, setWaFor] = useState(null);
     const editForm = useForm({ template_name: "", method: "qris", amount: 0, status: "paid", paid_at: "" });
     const showActions = canEdit || canDelete;
     const [searchText, setSearchText] = useState(filters.search || "");
@@ -207,12 +264,6 @@ export default function Index({ filters, range, transactions, summary, studios, 
                                 <div>
                                     <p className="font-medium text-slate-800 dark:text-slate-200">{s.name} {!s.is_active && <span className="ml-1 rounded-full bg-slate-200 px-2 py-0.5 text-xs">nonaktif</span>}</p>
                                     <p className="text-xs text-slate-500">Token …{s.token_hint || "----"} · terakhir terhubung: {dt(s.last_seen_at)}</p>
-                                    {s.is_active && s.status && (() => { const [dot, txt, label] = BOOTH_STATE[s.status.state] || BOOTH_STATE.unknown; return (
-                                        <div className="mt-1" data-testid="booth-status">
-                                            <span className={`inline-flex items-center gap-1.5 text-xs font-semibold ${txt}`}><span className={`h-2 w-2 rounded-full ${dot}`} />{label}</span>
-                                            {s.status.notes?.map((n, i) => <p key={i} className="text-xs text-slate-500">{n}</p>)}
-                                        </div>
-                                    ); })()}
                                 </div>
                                 {canManage && (
                                     <div className="flex gap-2">
@@ -378,7 +429,14 @@ export default function Index({ filters, range, transactions, summary, studios, 
                                             const why = !t.gallery_url ? "Link belum ada" : t.gallery_state === "expired" ? "Link kedaluwarsa" : "Foto belum terupload";
                                             return <span title={`${why}. Unggah dulu di website galeri (menu Link pelanggan), lalu tombol ini aktif.`} className={`${base} cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400 dark:border-slate-700 dark:bg-slate-800`}><IconBrandWhatsapp size={16} />Kirim link</span>;
                                         }
-                                        return <a href={waLink(t)} target="_blank" rel="noopener noreferrer" title={t.customer_wa ? `Kirim ke ${t.customer_name || t.customer_wa}` : "Nomor tamu tidak ada, pilih kontak di WhatsApp"} className={`${base} border-emerald-200 bg-emerald-100 text-emerald-700 hover:bg-emerald-200 dark:border-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-400`}><IconBrandWhatsapp size={16} />Kirim link</a>;
+                                        return (
+                                            <div className="flex items-center gap-1">
+                                                {t.customer_wa
+                                                    ? <a href={waLink(t)} target="_blank" rel="noopener noreferrer" title={`Kirim ke ${t.customer_name || t.customer_wa}`} className={`${base} border-emerald-200 bg-emerald-100 text-emerald-700 hover:bg-emerald-200 dark:border-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-400`}><IconBrandWhatsapp size={16} />Kirim link</a>
+                                                    : <button type="button" onClick={() => setWaFor(t)} title="Nomor tamu belum ada: isi manual atau cari dari data pelanggan" className={`${base} border-emerald-200 bg-emerald-100 text-emerald-700 hover:bg-emerald-200 dark:border-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-400`}><IconBrandWhatsapp size={16} />Kirim link</button>}
+                                                <button type="button" onClick={() => setWaFor(t)} title="Isi / ubah nama & nomor WhatsApp" className="rounded-lg border border-slate-200 bg-slate-100 p-2 text-slate-600 hover:bg-slate-200 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"><IconPencil size={14} /></button>
+                                            </div>
+                                        );
                                     })()}
                                     {t.customer_wa && <span className="mt-1 block text-[11px] text-slate-500">+{t.customer_wa}</span>}
                                 </Table.Td>
@@ -400,6 +458,7 @@ export default function Index({ filters, range, transactions, summary, studios, 
             </Table.Card>
             {transactions.last_page > 1 && <Pagination links={transactions.links} />}
 
+            {waFor && <WaContactModal key={waFor.id} t={waFor} onClose={() => setWaFor(null)} />}
             {editing && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4" onClick={() => setEditing(null)}>
                     <form onSubmit={saveEdit} onClick={(e) => e.stopPropagation()} className="w-full max-w-md rounded-2xl bg-white p-5 shadow-xl dark:bg-slate-900">
