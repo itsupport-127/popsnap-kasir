@@ -36,7 +36,8 @@ const copyText = async (text, okMsg = "Link disalin") => {
 const waLink = (t, c = null) => {
     const name = c ? c.name : t.customer_name, wa = c ? c.wa : t.customer_wa;
     const hai = name ? `Hii ${name}!` : "Hii kak!";
-    const text = `${hai} Thanks for stopping by Popsnap! 📸\nHere's your photobox soft file:\n${t.gallery_url}\n\nHope you had tons of fun, come again soon! 💛`;
+    // Tanpa emoji / stiker: karakter emoji sering rusak ("?") di tautan wa.me pada sebagian perangkat
+    const text = `${hai} Terima kasih sudah seru-seruan bareng Popsnap!\nIni soft file foto kamu, yuk langsung dilihat dan diunduh:\n${t.gallery_url}\n\nSemoga hasilnya bikin senyum-senyum sendiri. Kami tunggu kamu lagi di Popsnap, siap bergaya lebih seru!`;
     return `https://wa.me/${wa || ""}?text=${encodeURIComponent(text)}`;
 };
 const GALLERY_BADGE = {
