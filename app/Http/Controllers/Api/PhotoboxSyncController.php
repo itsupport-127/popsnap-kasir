@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\PhotoboxStudio;
 use App\Models\PhotoboxTransaction;
+use App\Services\PhotoboxDiscountService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
@@ -124,6 +125,20 @@ class PhotoboxSyncController extends Controller
         ]);
     }
 
+    /** Booth menanyakan potongan harga (promo otomatis + kode diskon) sebelum membuat QRIS. Hanya membaca, tidak memakai kuota. */
+    public function discountQuote(Request $request): JsonResponse
+    {
+        if (! $this->studio($request)) {
+            return response()->json(['ok' => false, 'error' => 'Token tidak valid atau studio nonaktif.'], 401);
+        }
+        $v = Validator::make($request->all(), ['amount' => ['required', 'integer', 'min:0', 'max:100000000'], 'code' => ['nullable', 'string', 'max:40']]);
+        if ($v->fails()) {
+            return response()->json(['ok' => false, 'error' => $v->errors()->first()], 422);
+        }
+
+        return response()->json(app(PhotoboxDiscountService::class)->quote((int) $request->input('amount'), $request->input('code')));
+    }
+
     public function store(Request $request): JsonResponse
     {
         $studio = $this->studio($request);
@@ -198,6 +213,18 @@ class PhotoboxSyncController extends Controller
                 continue;
             }
 
+            // Pemakaian kode diskon dicatat SEKALI saat transaksi lunas (kiriman ulang / susulan tidak menambah lagi).
+            $meta = $d['meta'] ?? null;
+            $code = is_array($meta) ? strtoupper(trim((string) ($meta['promo_code'] ?? ''))) : '';
+            $already = (bool) ($existing?->meta['promo_redeemed'] ?? false);
+            if ($already && is_array($meta)) {
+                $meta['promo_redeemed'] = true;
+            }
+            if ($code !== '' && $d['status'] === 'paid' && ! $already) {
+                app(PhotoboxDiscountService::class)->redeem($code);
+                $meta['promo_redeemed'] = true;
+            }
+
             PhotoboxTransaction::updateOrCreate(
                 ['order_no' => $d['order_no']],
                 [
@@ -215,7 +242,7 @@ class PhotoboxSyncController extends Controller
                     'session_id' => $d['session_id'] ?? null,
                     // jangan hapus link yang sudah ada kalau kiriman berikutnya tidak membawa link
                     'gallery_url' => $d['gallery_url'] ?? $existing?->gallery_url,
-                    'meta' => $d['meta'] ?? null,
+                    'meta' => $meta,
                 ]
             );
             $results[] = ['order_no' => $d['order_no'], 'ok' => true];
