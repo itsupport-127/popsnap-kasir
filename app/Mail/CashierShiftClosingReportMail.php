@@ -67,19 +67,29 @@ class CashierShiftClosingReportMail extends Mailable
     {
         $shift = $this->cashierShift;
 
+        $service = app(CashierShiftService::class);
+
         $cash = (int) $shift->cash_sales_total;
         $qris = (int) $shift->non_cash_sales_total;
-        $total = $cash + $qris;
+        $storeTotal = $cash + $qris;
+        // Penjualan booth Photobox (lunas, bukan transaksi uji) selama shift ikut masuk laporan.
+        $photobox = $service->photoboxTotalsFor($shift);
+        $photoboxTotal = $photobox['photobox_sales_total'];
+        $total = $storeTotal + $photoboxTotal;
         $expense = (int) $shift->expense_total;
 
         return [
             'cash' => $cash,
             'qris' => $qris,
+            'photobox' => $photoboxTotal,
+            'photobox_count' => $photobox['photobox_transactions_count'],
+            'photobox_recap' => $service->calculatePhotoboxRecap($shift),
+            'store_total' => $storeTotal,
             'total' => $total,
             'expense' => $expense,
             'note' => $shift->expense_notes,
             // Rekap item terjual (per kategori) supaya penerima laporan langsung tahu paket apa saja yang laku.
-            'items' => app(CashierShiftService::class)->calculateItemRecap($shift),
+            'items' => $service->calculateItemRecap($shift),
         ];
     }
 }

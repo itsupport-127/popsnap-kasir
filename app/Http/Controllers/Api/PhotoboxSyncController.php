@@ -169,6 +169,8 @@ class PhotoboxSyncController extends Controller
                 // hanya http(s): dipakai sebagai link & pesan WhatsApp di kasir
                 'gallery_url' => ['nullable', 'string', 'max:500', 'regex:#^https?://#i'],
                 'meta' => ['nullable', 'array'],
+                // transaksi uji (mode simulasi / gateway sandbox): bukan uang asli, tidak boleh masuk laporan kasir
+                'is_test' => ['nullable', 'boolean'],
             ]);
             $orderNo = is_array($row) ? (string) ($row['order_no'] ?? '') : '';
             if ($v->fails()) {
@@ -177,6 +179,12 @@ class PhotoboxSyncController extends Controller
                 continue;
             }
             $d = $v->validated();
+            if (! empty($d['is_test'])) {
+                // Dibuang sebelum disimpan: tidak ikut pendapatan, shift, maupun pemakaian kode diskon
+                $results[] = ['order_no' => $d['order_no'], 'ok' => true, 'kept' => 'test'];
+
+                continue;
+            }
             $tz = config('app.timezone');
             $paidAt = ! empty($d['paid_at']) ? Carbon::parse($d['paid_at'])->setTimezone($tz) : null;
             $createdAt = ! empty($d['created_at']) ? Carbon::parse($d['created_at'])->setTimezone($tz) : null;

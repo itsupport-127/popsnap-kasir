@@ -37,6 +37,20 @@ class PhotoboxSyncTest extends TestCase
         ], $over);
     }
 
+    public function test_test_transactions_from_simulation_or_sandbox_are_ignored(): void
+    {
+        [$studio, $token] = $this->studio();
+
+        $res = $this->withToken($token)->postJson('/api/photobox/transactions', ['transactions' => [
+            $this->row(['order_no' => 'PB-EMMA-261109-0001', 'is_test' => true]),
+            $this->row(['order_no' => 'PB-EMMA-261109-0002']),
+        ]])->assertOk();
+
+        $res->assertJsonPath('results.0.ok', true)->assertJsonPath('results.0.kept', 'test');
+        $this->assertDatabaseMissing('photobox_transactions', ['order_no' => 'PB-EMMA-261109-0001']);
+        $this->assertDatabaseHas('photobox_transactions', ['order_no' => 'PB-EMMA-261109-0002', 'amount' => 35000]);
+    }
+
     public function test_rejects_missing_or_wrong_token(): void
     {
         $this->postJson('/api/photobox/transactions', ['transactions' => [$this->row()]])->assertStatus(401);

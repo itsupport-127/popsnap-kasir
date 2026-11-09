@@ -154,7 +154,45 @@ function ItemRecapTable({ recap, salesTotal = null }) {
     );
 }
 
-function PreviewModal({ open, onClose, summary, recap, note, subject, dateLabel, storeLabel, cashierName, closedAt, shiftId }) {
+function PhotoboxRecapTable({ recap }) {
+    const items = recap?.items ?? [];
+
+    if (items.length === 0) {
+        return <p className="text-sm text-slate-500 dark:text-slate-400">Belum ada sesi photobox pada shift ini.</p>;
+    }
+
+    const num = "px-3 py-2 text-right tabular-nums whitespace-nowrap";
+
+    return (
+        <div className="overflow-x-auto rounded-xl border border-slate-200 dark:border-slate-800">
+            <table className="w-full text-sm">
+                <thead>
+                    <tr className="text-[11px] uppercase tracking-wide text-slate-400">
+                        <th className="px-3 py-2 text-left font-medium">Paket</th>
+                        <th className="px-3 py-2 text-right font-medium">Sesi</th>
+                        <th className="px-3 py-2 text-right font-medium">Nominal</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {items.map((item) => (
+                        <tr key={item.name} className="border-t border-slate-100 dark:border-slate-800">
+                            <td className="px-3 py-2 text-slate-700 dark:text-slate-300">{item.name}</td>
+                            <td className={`${num} font-semibold text-slate-900 dark:text-white`}>{item.qty}</td>
+                            <td className={`${num} text-slate-600 dark:text-slate-400`}>{formatCurrency(item.revenue)}</td>
+                        </tr>
+                    ))}
+                    <tr className="border-t border-slate-200 font-bold dark:border-slate-700">
+                        <td className="px-3 py-2 text-slate-900 dark:text-white">Total photobox</td>
+                        <td className={`${num} text-slate-900 dark:text-white`}>{recap.sessions}</td>
+                        <td className={`${num} text-slate-900 dark:text-white`}>{formatCurrency(recap.revenue)}</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    );
+}
+
+function PreviewModal({ open, onClose, summary, recap, photoboxRecap, note, subject, dateLabel, storeLabel, cashierName, closedAt, shiftId }) {
     if (!open) return null;
 
     const row = (label, value, muted = false) => (
@@ -193,12 +231,18 @@ function PreviewModal({ open, onClose, summary, recap, note, subject, dateLabel,
                         <div className="px-5 py-4">
                             {row("Cash", formatCurrency(summary.cash))}
                             {row("Qris", formatCurrency(summary.qris))}
+                            {row(`Photobox (${summary.photoboxCount} transaksi)`, formatCurrency(summary.photobox))}
                             {row("Total Penjualan", formatCurrency(summary.total))}
                             {row("Pengeluaran", formatCurrency(summary.expense), true)}
 
                             <div className="mt-4">
                                 <p className="mb-2 text-[11px] uppercase tracking-wide text-slate-400">Item Terjual</p>
-                                <ItemRecapTable recap={recap} salesTotal={summary.total} />
+                                <ItemRecapTable recap={recap} salesTotal={summary.storeTotal} />
+                            </div>
+
+                            <div className="mt-4">
+                                <p className="mb-2 text-[11px] uppercase tracking-wide text-slate-400">Photobox</p>
+                                <PhotoboxRecapTable recap={photoboxRecap} />
                             </div>
 
                             <div className="mt-4 rounded-lg bg-slate-50 p-3 dark:bg-slate-800/60">
@@ -238,6 +282,7 @@ function PreviewModal({ open, onClose, summary, recap, note, subject, dateLabel,
 export default function Show({
     cashierShift,
     itemRecap = null,
+    photoboxRecap = null,
     canForceClose = false,
     canSendReportEmail = false,
     reportRecipients = [],
@@ -287,13 +332,18 @@ export default function Show({
     const previewSummary = useMemo(() => {
         const cash = Number(cashierShift.cash_sales_total || 0);
         const qris = Number(cashierShift.non_cash_sales_total || 0);
+        const photobox = Number(cashierShift.photobox_sales_total || 0);
         return {
             cash,
             qris,
-            total: cash + qris,
+            photobox,
+            photoboxCount: Number(cashierShift.photobox_transactions_count || 0),
+            // storeTotal = Cash + Qris (dipakai untuk membandingkan dengan rekap item toko); total = termasuk Photobox
+            storeTotal: cash + qris,
+            total: cash + qris + photobox,
             expense: Number(cashierShift.expense_total || 0),
         };
-    }, [cashierShift.cash_sales_total, cashierShift.non_cash_sales_total, cashierShift.expense_total]);
+    }, [cashierShift.cash_sales_total, cashierShift.non_cash_sales_total, cashierShift.photobox_sales_total, cashierShift.photobox_transactions_count, cashierShift.expense_total]);
 
     const previewDate = useMemo(() => {
         const d = cashierShift.closed_at ? new Date(cashierShift.closed_at) : new Date();
@@ -384,6 +434,7 @@ export default function Show({
                 onClose={() => setShowPreview(false)}
                 summary={previewSummary}
                 recap={itemRecap}
+                photoboxRecap={photoboxRecap}
                 note={cashierShift.expense_notes}
                 subject={previewSubject}
                 dateLabel={previewDate}
@@ -467,6 +518,13 @@ export default function Show({
                             <div>
                                 <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Penjualan Non Tunai</p>
                                 <p className="mt-2 text-sm text-slate-900 dark:text-white">{formatCurrency(cashierShift.non_cash_sales_total)}</p>
+                            </div>
+                            <div>
+                                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Penjualan Photobox</p>
+                                <p className="mt-2 text-sm text-slate-900 dark:text-white">
+                                    {formatCurrency(cashierShift.photobox_sales_total)}
+                                    <span className="ml-1 text-xs text-slate-500 dark:text-slate-400">({cashierShift.photobox_transactions_count || 0} transaksi)</span>
+                                </p>
                             </div>
                             <div>
                                 <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Refund Non Tunai</p>
@@ -736,6 +794,14 @@ export default function Show({
                         Semua barang yang terjual di shift ini (lunas dan piutang), per kategori, lengkap dengan nominal setelah diskon. Retur yang selesai di shift ini mengurangi jumlah dan nominal. Rekap yang sama ikut terkirim di email tutup kasir.
                     </p>
                     <ItemRecapTable recap={itemRecap} salesTotal={cashierShift.sales_grand_total} />
+                </div>
+
+                <div className="rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
+                    <h2 className="text-lg font-semibold text-slate-900 dark:text-white">Rekap Photobox</h2>
+                    <p className="mb-4 mt-1 text-xs text-slate-500 dark:text-slate-400">
+                        Sesi photobox yang lunas selama shift ini (QRIS / voucher), per paket. Transaksi uji (mode simulasi atau sandbox) tidak ikut terhitung. Rekap yang sama ikut terkirim di email tutup kasir.
+                    </p>
+                    <PhotoboxRecapTable recap={photoboxRecap} />
                 </div>
             </div>
         </>

@@ -4,7 +4,10 @@ namespace Tests\Feature\CashierShifts;
 
 use App\Models\CashierShift;
 use App\Models\Category;
+use App\Mail\CashierShiftClosingReportMail;
 use App\Models\Customer;
+use App\Models\PhotoboxStudio;
+use App\Models\PhotoboxTransaction;
 use App\Models\Product;
 use App\Models\SalesReturn;
 use App\Models\Transaction;
@@ -217,6 +220,59 @@ class CashierShiftTest extends TestCase
             'non_cash_sales_total' => 50000,
             'cash_refund_total' => 10000,
         ]);
+    }
+
+    public function test_closing_shift_includes_paid_photobox_sales_in_shift_window_and_email(): void
+    {
+        $cashier = $this->createUserWithPermissions([
+            'cashier-shifts-access',
+            'cashier-shifts-close',
+        ]);
+
+        $shift = CashierShift::create([
+            'user_id' => $cashier->id,
+            'opened_by' => $cashier->id,
+            'opened_at' => now()->subHours(3),
+            'opening_cash' => 100000,
+            'expected_cash' => 100000,
+            'status' => CashierShift::STATUS_OPEN,
+        ]);
+
+        $studio = new PhotoboxStudio(['name' => 'Studio Emma', 'is_active' => true, 'token_hash' => bin2hex(random_bytes(32))]);
+        $studio->save();
+
+        $make = fn (string $no, int $amount, string $status, $paidAt) => PhotoboxTransaction::create([
+            'order_no' => $no, 'studio_id' => $studio->id, 'template_name' => 'Emma Room', 'mode' => 'photo',
+            'method' => 'qris', 'amount' => $amount, 'status' => $status, 'paid_at' => $paidAt,
+        ]);
+
+        $make('PB-T-0001', 35000, 'paid', now()->subHour());      // masuk
+        $make('PB-T-0002', 40000, 'paid', now()->subMinutes(30)); // masuk
+        $make('PB-T-0003', 99000, 'pending', null);                // belum lunas: tidak masuk
+        $make('PB-T-0004', 77000, 'paid', now()->subHours(5));    // sebelum shift dibuka: tidak masuk
+        $deleted = $make('PB-T-0005', 55000, 'paid', now()->subMinutes(10));
+        $deleted->delete();                                         // dihapus di kasir: tidak masuk
+
+        $this->actingAs($cashier)
+            ->post(route('cashier-shifts.close', $shift), ['actual_cash' => 100000])
+            ->assertRedirect(route('cashier-shifts.show', $shift));
+
+        $this->assertDatabaseHas('cashier_shifts', [
+            'id' => $shift->id,
+            'status' => CashierShift::STATUS_CLOSED,
+            'photobox_sales_total' => 75000,
+            'photobox_transactions_count' => 2,
+            // photobox dibayar lewat QRIS ke gateway: tidak mengubah kas laci
+            'expected_cash' => 100000,
+            'cash_difference' => 0,
+            'cash_sales_total' => 0,
+            'non_cash_sales_total' => 0,
+        ]);
+
+        $html = (new CashierShiftClosingReportMail($shift->fresh()))->render();
+        $this->assertStringContainsString('Photobox', $html);
+        $this->assertStringContainsString('Rp 75.000', $html);
+        $this->assertStringContainsString('Emma Room', $html);
     }
 
     public function test_admin_with_force_close_permission_can_close_other_cashier_shift(): void

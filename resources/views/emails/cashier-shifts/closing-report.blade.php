@@ -30,6 +30,10 @@
                                     <td style="padding:6px 0;text-align:right;font-weight:600;">{{ $rp($summary['qris']) }}</td>
                                 </tr>
                                 <tr>
+                                    <td style="padding:6px 0;color:#64748b;">Photobox <span style="font-size:12px;color:#94a3b8;">({{ (int) ($summary['photobox_count'] ?? 0) }} transaksi)</span></td>
+                                    <td style="padding:6px 0;text-align:right;font-weight:600;">{{ $rp($summary['photobox'] ?? 0) }}</td>
+                                </tr>
+                                <tr>
                                     <td style="padding:10px 0 6px;color:#0f172a;border-top:1px solid #e2e8f0;font-weight:700;">Total Penjualan</td>
                                     <td style="padding:10px 0 6px;text-align:right;border-top:1px solid #e2e8f0;font-weight:700;">{{ $rp($summary['total']) }}</td>
                                 </tr>
@@ -41,7 +45,7 @@
 
                             @php
                                 $recap = $summary['items'] ?? ['groups' => [], 'totals' => ['net_qty' => 0, 'net_revenue' => 0, 'returned' => 0]];
-                                $diff = (int) ($summary['total'] ?? 0) - (int) ($recap['totals']['net_revenue'] ?? 0);
+                                $diff = (int) ($summary['store_total'] ?? $summary['total'] ?? 0) - (int) ($recap['totals']['net_revenue'] ?? 0);
                             @endphp
                             <div style="margin-top:16px;">
                                 <p style="margin:0 0 6px;font-size:12px;color:#64748b;text-transform:uppercase;letter-spacing:.05em;">Item Terjual</p>
@@ -80,10 +84,40 @@
                                         </tr>
                                         @if ($diff !== 0)
                                             <tr>
-                                                <td colspan="2" style="padding:6px 12px 10px;font-size:12px;color:#94a3b8;">Selisih dengan Total Penjualan<br>(ongkir, retur, atau transaksi belum lunas)</td>
+                                                <td colspan="2" style="padding:6px 12px 10px;font-size:12px;color:#94a3b8;">Selisih dengan penjualan toko (Cash + Qris)<br>(ongkir, retur, atau transaksi belum lunas)</td>
                                                 <td style="padding:6px 12px 10px;text-align:right;font-size:12px;color:#94a3b8;white-space:nowrap;vertical-align:top;">{{ $diff < 0 ? '-' : '' }}{{ $rp(abs($diff)) }}</td>
                                             </tr>
                                         @endif
+                                    </table>
+                                @endif
+                            </div>
+
+                            @php
+                                $pbRecap = $summary['photobox_recap'] ?? ['sessions' => 0, 'items' => []];
+                            @endphp
+                            <div style="margin-top:16px;">
+                                <p style="margin:0 0 6px;font-size:12px;color:#64748b;text-transform:uppercase;letter-spacing:.05em;">Photobox</p>
+                                @if (empty($pbRecap['items']))
+                                    <p style="margin:0;font-size:14px;color:#94a3b8;">Belum ada sesi photobox pada shift ini.</p>
+                                @else
+                                    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="font-size:14px;border:1px solid #e2e8f0;border-radius:10px;">
+                                        <tr>
+                                            <td style="padding:6px 12px;font-size:11px;color:#94a3b8;text-transform:uppercase;letter-spacing:.05em;">Paket</td>
+                                            <td style="padding:6px 8px;font-size:11px;color:#94a3b8;text-transform:uppercase;letter-spacing:.05em;text-align:right;">Sesi</td>
+                                            <td style="padding:6px 12px;font-size:11px;color:#94a3b8;text-transform:uppercase;letter-spacing:.05em;text-align:right;">Nominal</td>
+                                        </tr>
+                                        @foreach ($pbRecap['items'] as $pbItem)
+                                            <tr>
+                                                <td style="padding:6px 12px;color:#334155;border-top:1px solid #f1f5f9;">{{ $pbItem['name'] }}</td>
+                                                <td style="padding:6px 8px;text-align:right;font-weight:600;color:#0f172a;border-top:1px solid #f1f5f9;white-space:nowrap;">{{ $pbItem['qty'] }}</td>
+                                                <td style="padding:6px 12px;text-align:right;color:#475569;border-top:1px solid #f1f5f9;white-space:nowrap;">{{ $rp($pbItem['revenue']) }}</td>
+                                            </tr>
+                                        @endforeach
+                                        <tr>
+                                            <td style="padding:10px 12px;font-weight:700;color:#0f172a;border-top:1px solid #e2e8f0;">Total photobox</td>
+                                            <td style="padding:10px 8px;text-align:right;font-weight:700;color:#0f172a;border-top:1px solid #e2e8f0;">{{ $pbRecap['sessions'] }}</td>
+                                            <td style="padding:10px 12px;text-align:right;font-weight:700;color:#0f172a;border-top:1px solid #e2e8f0;white-space:nowrap;">{{ $rp($pbRecap['revenue']) }}</td>
+                                        </tr>
                                     </table>
                                 @endif
                             </div>

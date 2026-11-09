@@ -68,6 +68,7 @@ class CashierShiftController extends Controller
         return Inertia::render('Dashboard/CashierShifts/Show', [
             'cashierShift' => $this->transformShift($cashierShift),
             'itemRecap' => $this->cashierShiftService->calculateItemRecap($cashierShift),
+            'photoboxRecap' => $this->cashierShiftService->calculatePhotoboxRecap($cashierShift),
             'canForceClose' => $request->user()->isSuperAdmin() || $request->user()->can('cashier-shifts-force-close'),
             'canSendReportEmail' => $request->user()->isSuperAdmin() || $request->user()->can('cashier-shifts-close'),
             'reportRecipients' => $this->cashierShiftService->reportRecipients(),
@@ -238,6 +239,7 @@ class CashierShiftController extends Controller
     private function transformShift(CashierShift $shift): array
     {
         $summary = $this->cashierShiftService->calculateSummary($shift);
+        $photobox = $this->cashierShiftService->photoboxTotalsFor($shift);
 
         return [
             'id' => $shift->id,
@@ -252,6 +254,8 @@ class CashierShiftController extends Controller
                 : ($shift->cash_difference !== null ? (int) $shift->cash_difference : null),
             'cash_sales_total' => $shift->isOpen() ? $summary['cash_sales_total'] : (int) $shift->cash_sales_total,
             'non_cash_sales_total' => $shift->isOpen() ? $summary['non_cash_sales_total'] : (int) $shift->non_cash_sales_total,
+            'photobox_sales_total' => $photobox['photobox_sales_total'],
+            'photobox_transactions_count' => $photobox['photobox_transactions_count'],
             'cash_refund_total' => $shift->isOpen() ? $summary['cash_refund_total'] : (int) $shift->cash_refund_total,
             'non_cash_refund_total' => $shift->isOpen() ? $summary['non_cash_refund_total'] : (int) $shift->non_cash_refund_total,
             'transactions_count' => $shift->isOpen() ? $summary['transactions_count'] : (int) $shift->transactions_count,

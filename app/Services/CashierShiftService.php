@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Mail\CashierShiftClosingReportMail;
 use App\Models\CashierShift;
+use App\Models\PhotoboxTransaction;
 use App\Models\Product;
 use App\Models\SalesReturn;
 use App\Models\SalesReturnItem;
@@ -13,6 +14,7 @@ use App\Models\User;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Mail;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\ValidationException;
 
 class CashierShiftService
@@ -115,14 +117,99 @@ class CashierShiftService
         $salesReturnsCount = (int) (clone $salesReturns)->count();
         $expectedCash = (int) $shift->opening_cash + $cashSalesTotal - $cashRefundTotal;
 
+        $photobox = $this->calculatePhotoboxTotals($shift);
+
         return [
             'cash_sales_total' => $cashSalesTotal,
             'non_cash_sales_total' => $nonCashSalesTotal,
+            // Photobox dibayar lewat QRIS langsung ke gateway (tidak lewat laci kas), jadi TIDAK mengubah expected_cash.
+            'photobox_sales_total' => $photobox['photobox_sales_total'],
+            'photobox_transactions_count' => $photobox['photobox_transactions_count'],
             'cash_refund_total' => $cashRefundTotal,
             'non_cash_refund_total' => $nonCashRefundTotal,
             'transactions_count' => $transactionsCount,
             'sales_returns_count' => $salesReturnsCount,
             'expected_cash' => $expectedCash,
+        ];
+    }
+
+    /**
+     * Jendela waktu shift: dari dibuka sampai ditutup (atau sampai sekarang kalau masih buka).
+     * Transaksi photobox tidak punya kasir, jadi dikaitkan ke shift lewat waktu bayarnya.
+     *
+     * @return array{0: \Illuminate\Support\Carbon, 1: \Illuminate\Support\Carbon}
+     */
+    private function shiftWindow(CashierShift $shift): array
+    {
+        return [$shift->opened_at, $shift->closed_at ?? now()];
+    }
+
+    /**
+     * Penjualan photobox selama shift: hanya yang LUNAS dan bernilai (amount > 0), tanpa yang dihapus di kasir.
+     * Aturannya sama dengan PhotoboxStats / dashboard supaya angkanya konsisten.
+     * Transaksi uji (mode simulasi / sandbox) tidak pernah dikirim booth ke sini, jadi tidak ikut terhitung.
+     *
+     * @return array{photobox_sales_total: int, photobox_transactions_count: int}
+     */
+    public function calculatePhotoboxTotals(CashierShift $shift): array
+    {
+        if (! Schema::hasTable('photobox_transactions') || ! $shift->opened_at) {
+            return ['photobox_sales_total' => 0, 'photobox_transactions_count' => 0];
+        }
+
+        [$start, $end] = $this->shiftWindow($shift);
+
+        $row = PhotoboxTransaction::query()
+            ->where('status', 'paid')
+            ->where('amount', '>', 0)
+            ->whereBetween('paid_at', [$start, $end])
+            ->selectRaw('COALESCE(SUM(amount), 0) as total, COUNT(*) as cnt')
+            ->first();
+
+        return [
+            'photobox_sales_total' => (int) ($row->total ?? 0),
+            'photobox_transactions_count' => (int) ($row->cnt ?? 0),
+        ];
+    }
+
+    /**
+     * Angka photobox untuk ditampilkan: shift terbuka = hitung langsung; shift tertutup = angka yang tersimpan saat tutup.
+     * Shift lama yang kolomnya masih null (dibuat sebelum fitur ini) dihitung langsung dari transaksi photobox.
+     *
+     * @return array{photobox_sales_total: int, photobox_transactions_count: int}
+     */
+    public function photoboxTotalsFor(CashierShift $shift): array
+    {
+        if (! $shift->isOpen() && $shift->photobox_sales_total !== null && $shift->photobox_transactions_count !== null) {
+            return [
+                'photobox_sales_total' => (int) $shift->photobox_sales_total,
+                'photobox_transactions_count' => (int) $shift->photobox_transactions_count,
+            ];
+        }
+
+        return $this->calculatePhotoboxTotals($shift);
+    }
+
+    /**
+     * Rekap sesi photobox per template/paket selama shift (untuk email & halaman shift).
+     * "sessions" termasuk sesi voucher bernilai 0 (pendapatannya sudah tercatat di transaksi kasir saat voucher dibeli).
+     *
+     * @return array{sessions: int, transactions: int, revenue: int, items: array<int, array{name: string, qty: int, revenue: int}>}
+     */
+    public function calculatePhotoboxRecap(CashierShift $shift): array
+    {
+        if (! Schema::hasTable('photobox_transactions') || ! $shift->opened_at) {
+            return ['sessions' => 0, 'transactions' => 0, 'revenue' => 0, 'items' => []];
+        }
+
+        [$start, $end] = $this->shiftWindow($shift);
+        $stats = PhotoboxStats::summary($start, $end);
+
+        return [
+            'sessions' => (int) $stats['sessions'],
+            'transactions' => (int) $stats['transactions'],
+            'revenue' => (int) $stats['revenue'],
+            'items' => collect($stats['byTemplate'])->all(),
         ];
     }
 

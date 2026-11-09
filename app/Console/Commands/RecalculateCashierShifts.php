@@ -63,10 +63,11 @@ class RecalculateCashierShifts extends Command
 
         $this->line(
             sprintf(
-                'Shift #%d | cash=%d | qris=%d | expected=%d | refund_cash=%d | refund_non_cash=%d',
+                'Shift #%d | cash=%d | qris=%d | photobox=%d | expected=%d | refund_cash=%d | refund_non_cash=%d',
                 $shift->id,
                 $summary['cash_sales_total'],
                 $summary['non_cash_sales_total'],
+                $summary['photobox_sales_total'],
                 $summary['expected_cash'],
                 $summary['cash_refund_total'],
                 $summary['non_cash_refund_total']
@@ -80,6 +81,8 @@ class RecalculateCashierShifts extends Command
         $shift->update([
             'cash_sales_total' => $summary['cash_sales_total'],
             'non_cash_sales_total' => $summary['non_cash_sales_total'],
+            'photobox_sales_total' => $summary['photobox_sales_total'],
+            'photobox_transactions_count' => $summary['photobox_transactions_count'],
             'cash_refund_total' => $summary['cash_refund_total'],
             'non_cash_refund_total' => $summary['non_cash_refund_total'],
             'transactions_count' => $summary['transactions_count'],
