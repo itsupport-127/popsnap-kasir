@@ -13,37 +13,40 @@ return new class extends Migration
         $column = 'pricing_rule_id';
         $connection = Schema::getConnection()->getDatabaseName();
 
-        // ── 1. Drop FOREIGN KEY kalau memang benar-benar ada ────────────
-        // Di sebagian database lama, kolom ini cuma punya INDEX biasa
-        // bernama mirip FK (mis. transaction_details_pricing_rule_id_foreign)
-        // tanpa constraint FOREIGN KEY sungguhan, jadi dropForeign() bawaan
-        // Laravel akan gagal. Kita cek dulu lewat information_schema.
-        $foreignKeyName = DB::table('information_schema.TABLE_CONSTRAINTS')
-            ->where('CONSTRAINT_SCHEMA', $connection)
-            ->where('TABLE_NAME', $table)
-            ->where('CONSTRAINT_TYPE', 'FOREIGN KEY')
-            ->where('CONSTRAINT_NAME', 'like', "%{$column}%")
-            ->value('CONSTRAINT_NAME');
+        // Langkah 1-2 memakai information_schema + sintaks ALTER khas MySQL/MariaDB. Di SQLite (dipakai tes otomatis) tidak ada & tidak perlu.
+        if (in_array(DB::getDriverName(), ['mysql', 'mariadb'], true)) {
+            // ── 1. Drop FOREIGN KEY kalau memang benar-benar ada ────────────
+            // Di sebagian database lama, kolom ini cuma punya INDEX biasa
+            // bernama mirip FK (mis. transaction_details_pricing_rule_id_foreign)
+            // tanpa constraint FOREIGN KEY sungguhan, jadi dropForeign() bawaan
+            // Laravel akan gagal. Kita cek dulu lewat information_schema.
+            $foreignKeyName = DB::table('information_schema.TABLE_CONSTRAINTS')
+                ->where('CONSTRAINT_SCHEMA', $connection)
+                ->where('TABLE_NAME', $table)
+                ->where('CONSTRAINT_TYPE', 'FOREIGN KEY')
+                ->where('CONSTRAINT_NAME', 'like', "%{$column}%")
+                ->value('CONSTRAINT_NAME');
 
-        if ($foreignKeyName) {
-            DB::statement("ALTER TABLE `{$table}` DROP FOREIGN KEY `{$foreignKeyName}`");
-        }
-
-        // ── 2. Drop INDEX lama (FK maupun index biasa) kalau masih ada ──
-        // supaya tidak bentrok / duplikat index saat constraint baru
-        // ditambahkan di langkah akhir.
-        $indexNames = DB::table('information_schema.STATISTICS')
-            ->where('TABLE_SCHEMA', $connection)
-            ->where('TABLE_NAME', $table)
-            ->where('COLUMN_NAME', $column)
-            ->pluck('INDEX_NAME')
-            ->unique();
-
-        foreach ($indexNames as $indexName) {
-            if ($indexName === 'PRIMARY') {
-                continue;
+            if ($foreignKeyName) {
+                DB::statement("ALTER TABLE `{$table}` DROP FOREIGN KEY `{$foreignKeyName}`");
             }
-            DB::statement("ALTER TABLE `{$table}` DROP INDEX `{$indexName}`");
+
+            // ── 2. Drop INDEX lama (FK maupun index biasa) kalau masih ada ──
+            // supaya tidak bentrok / duplikat index saat constraint baru
+            // ditambahkan di langkah akhir.
+            $indexNames = DB::table('information_schema.STATISTICS')
+                ->where('TABLE_SCHEMA', $connection)
+                ->where('TABLE_NAME', $table)
+                ->where('COLUMN_NAME', $column)
+                ->pluck('INDEX_NAME')
+                ->unique();
+
+            foreach ($indexNames as $indexName) {
+                if ($indexName === 'PRIMARY') {
+                    continue;
+                }
+                DB::statement("ALTER TABLE `{$table}` DROP INDEX `{$indexName}`");
+            }
         }
 
         // ── 3. Kosongkan data lama (id dari pricing_rules tidak nyambung

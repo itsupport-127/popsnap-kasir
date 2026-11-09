@@ -217,8 +217,8 @@ class PhotoboxSyncController extends Controller
             $meta = $d['meta'] ?? null;
             $code = is_array($meta) ? strtoupper(trim((string) ($meta['promo_code'] ?? ''))) : '';
             $already = (bool) ($existing?->meta['promo_redeemed'] ?? false);
-            if ($already && is_array($meta)) {
-                $meta['promo_redeemed'] = true;
+            if ($already) { // tanda "sudah dihitung" tidak boleh hilang walau kiriman ulang tidak membawa meta
+                $meta = array_merge(is_array($meta) ? $meta : [], ['promo_redeemed' => true]);
             }
             if ($code !== '' && $d['status'] === 'paid' && ! $already) {
                 app(PhotoboxDiscountService::class)->redeem($code);
