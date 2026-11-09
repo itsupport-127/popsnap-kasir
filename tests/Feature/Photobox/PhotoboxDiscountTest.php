@@ -21,6 +21,7 @@ class PhotoboxDiscountTest extends TestCase
         foreach ([
             '2026_10_22_000100_create_photobox_tables', '2026_10_26_000100_add_soft_delete_and_edit_to_photobox_transactions',
             '2026_10_27_000100_add_gallery_url_to_photobox_transactions', '2026_11_03_000100_add_sync_report_to_photobox_studios',
+            '2026_11_09_000200_add_is_test_to_photobox_transactions_table',
             '2026_06_29_000100_create_promos_table', '2026_08_01_000100_add_payment_method_restriction_to_promos_table',
             '2026_08_01_000200_add_applies_to_qty_to_promos_table', '2026_08_02_000100_add_allow_zero_price_to_promos_table',
             '2026_08_02_000200_add_discount_scope_to_promos_table', '2026_08_02_000200_add_usage_limit_mode_to_promos_table',

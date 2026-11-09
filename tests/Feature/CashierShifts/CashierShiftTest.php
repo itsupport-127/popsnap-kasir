@@ -250,6 +250,10 @@ class CashierShiftTest extends TestCase
         $make('PB-T-0002', 40000, 'paid', now()->subMinutes(30)); // masuk
         $make('PB-T-0003', 99000, 'pending', null);                // belum lunas: tidak masuk
         $make('PB-T-0004', 77000, 'paid', now()->subHours(5));    // sebelum shift dibuka: tidak masuk
+        PhotoboxTransaction::create([ // transaksi uji (simulasi / sandbox): tampil di riwayat tapi tidak dihitung
+            'order_no' => 'PB-T-0006', 'studio_id' => $studio->id, 'template_name' => 'Emma Room', 'mode' => 'photo',
+            'method' => 'qris', 'amount' => 88000, 'status' => 'paid', 'is_test' => true, 'paid_at' => now()->subMinutes(20),
+        ]);
         $deleted = $make('PB-T-0005', 55000, 'paid', now()->subMinutes(10));
         $deleted->delete();                                         // dihapus di kasir: tidak masuk
 

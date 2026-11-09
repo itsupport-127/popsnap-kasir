@@ -18,6 +18,7 @@ class PhotoboxSyncTest extends TestCase
         $this->artisan('migrate', ['--path' => 'database/migrations/2026_10_26_000100_add_soft_delete_and_edit_to_photobox_transactions.php', '--force' => true]);
         $this->artisan('migrate', ['--path' => 'database/migrations/2026_10_27_000100_add_gallery_url_to_photobox_transactions.php', '--force' => true]);
         $this->artisan('migrate', ['--path' => 'database/migrations/2026_11_03_000100_add_sync_report_to_photobox_studios.php', '--force' => true]);
+        $this->artisan('migrate', ['--path' => 'database/migrations/2026_11_09_000200_add_is_test_to_photobox_transactions_table.php', '--force' => true]);
     }
 
     private function studio(string $name = 'Studio Emma'): array
@@ -37,18 +38,30 @@ class PhotoboxSyncTest extends TestCase
         ], $over);
     }
 
-    public function test_test_transactions_from_simulation_or_sandbox_are_ignored(): void
+    public function test_test_transactions_are_stored_for_history_but_not_counted_as_revenue(): void
     {
         [$studio, $token] = $this->studio();
 
-        $res = $this->withToken($token)->postJson('/api/photobox/transactions', ['transactions' => [
-            $this->row(['order_no' => 'PB-EMMA-261109-0001', 'is_test' => true]),
-            $this->row(['order_no' => 'PB-EMMA-261109-0002']),
-        ]])->assertOk();
+        $this->withToken($token)->postJson('/api/photobox/transactions', ['transactions' => [
+            $this->row(['order_no' => 'PB-EMMA-261109-0001', 'amount' => 99000, 'is_test' => true]),
+            $this->row(['order_no' => 'PB-EMMA-261109-0002', 'amount' => 35000]),
+        ]])->assertOk()->assertJsonPath('results.0.ok', true)->assertJsonPath('results.1.ok', true);
 
-        $res->assertJsonPath('results.0.ok', true)->assertJsonPath('results.0.kept', 'test');
-        $this->assertDatabaseMissing('photobox_transactions', ['order_no' => 'PB-EMMA-261109-0001']);
-        $this->assertDatabaseHas('photobox_transactions', ['order_no' => 'PB-EMMA-261109-0002', 'amount' => 35000]);
+        // tersimpan (muncul di riwayat) dengan penanda test
+        $this->assertDatabaseHas('photobox_transactions', ['order_no' => 'PB-EMMA-261109-0001', 'amount' => 99000, 'is_test' => true]);
+        $this->assertDatabaseHas('photobox_transactions', ['order_no' => 'PB-EMMA-261109-0002', 'amount' => 35000, 'is_test' => false]);
+
+        // tapi tidak masuk pendapatan / jumlah sesi / rincian paket
+        $sum = PhotoboxStats::summary(now()->startOfDay(), now()->endOfDay());
+        $this->assertSame(35000, $sum['revenue']);
+        $this->assertSame(1, $sum['sessions']);
+        $this->assertSame(1, $sum['transactions']);
+
+        // dikirim ulang tetap test (tidak berubah jadi asli)
+        $this->withToken($token)->postJson('/api/photobox/transactions', ['transactions' => [
+            $this->row(['order_no' => 'PB-EMMA-261109-0001', 'amount' => 99000, 'is_test' => true]),
+        ]])->assertOk();
+        $this->assertSame(35000, PhotoboxStats::summary(now()->startOfDay(), now()->endOfDay())['revenue']);
     }
 
     public function test_rejects_missing_or_wrong_token(): void

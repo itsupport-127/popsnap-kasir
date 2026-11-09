@@ -417,12 +417,12 @@ export default function Index({ filters, range, transactions, summary, studios, 
                     <Table.Tbody>
                         {transactions.data.length ? transactions.data.map((t) => (
                             <tr key={t.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/50">
-                                <Table.Td><span className="font-mono text-xs font-semibold">{t.order_no}</span>{t.edited && <span className="ml-2 rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-semibold text-sky-700">diedit</span>}</Table.Td>
+                                <Table.Td><span className="font-mono text-xs font-semibold">{t.order_no}</span>{t.edited && <span className="ml-2 rounded-full bg-sky-100 px-2 py-0.5 text-[10px] font-semibold text-sky-700">diedit</span>}{t.is_test && <span title="Transaksi uji (mode simulasi / sandbox): tidak dihitung sebagai pendapatan" className="ml-2 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold text-amber-700">TEST</span>}</Table.Td>
                                 <Table.Td>{dt(t.paid_at || t.booth_created_at)}</Table.Td>
                                 <Table.Td>{t.studio}</Table.Td>
                                 <Table.Td>{t.template_name || "-"}{t.category ? <span className="block text-xs text-slate-500">{t.category}</span> : null}</Table.Td>
                                 <Table.Td>{METHOD_LABEL[t.method] || t.method}{t.voucher_code ? <span className="block font-mono text-xs text-slate-500">{t.voucher_code}</span> : null}</Table.Td>
-                                <Table.Td className="text-right">{rupiah(t.amount)}</Table.Td>
+                                <Table.Td className={`text-right ${t.is_test ? "text-slate-400 line-through" : ""}`}>{rupiah(t.amount)}</Table.Td>
                                 <Table.Td><span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${STATUS_STYLE[t.status] || ""}`}>{STATUS_LABEL[t.status] || t.status}</span></Table.Td>
                                 <Table.Td>
                                     {t.gallery_url ? (

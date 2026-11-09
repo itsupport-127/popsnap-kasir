@@ -7,7 +7,7 @@ use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 
 /**
- * Ringkasan Photobox untuk satu rentang waktu. Hanya transaksi status "paid" yang dihitung
+ * Ringkasan Photobox untuk satu rentang waktu. Hanya transaksi status "paid" dan BUKAN transaksi uji (is_test) yang dihitung
  * (konsisten dengan omzet kasir). "Produk terjual" = jumlah sesi per template/paket.
  * Voucher yang dibayar di kasir (amount 0 di booth) ikut dihitung sebagai sesi, tapi tidak menambah pendapatan
  * (pendapatannya sudah tercatat di transaksi kasir).
@@ -17,6 +17,7 @@ class PhotoboxStats
     public static function summary(Carbon $start, Carbon $end, ?int $studioId = null): array
     {
         $base = fn () => PhotoboxTransaction::query()
+            ->real()
             ->where('status', 'paid')
             ->whereBetween('paid_at', [$start, $end])
             ->when($studioId, fn ($q) => $q->where('studio_id', $studioId));
@@ -67,6 +68,7 @@ class PhotoboxStats
     public static function trend(string $period, Carbon $start, Carbon $end, ?int $studioId = null): array
     {
         $rows = PhotoboxTransaction::query()
+            ->real()
             ->where('status', 'paid')->where('amount', '>', 0)
             ->whereBetween('paid_at', [$start, $end])
             ->when($studioId, fn ($q) => $q->where('studio_id', $studioId))

@@ -147,7 +147,7 @@ class CashierShiftService
     /**
      * Penjualan photobox selama shift: hanya yang LUNAS dan bernilai (amount > 0), tanpa yang dihapus di kasir.
      * Aturannya sama dengan PhotoboxStats / dashboard supaya angkanya konsisten.
-     * Transaksi uji (mode simulasi / sandbox) tidak pernah dikirim booth ke sini, jadi tidak ikut terhitung.
+     * Transaksi uji (is_test: mode simulasi / sandbox) tidak ikut terhitung.
      *
      * @return array{photobox_sales_total: int, photobox_transactions_count: int}
      */
@@ -160,6 +160,7 @@ class CashierShiftService
         [$start, $end] = $this->shiftWindow($shift);
 
         $row = PhotoboxTransaction::query()
+            ->real()
             ->where('status', 'paid')
             ->where('amount', '>', 0)
             ->whereBetween('paid_at', [$start, $end])

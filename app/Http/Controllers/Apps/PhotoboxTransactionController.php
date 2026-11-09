@@ -60,6 +60,7 @@ class PhotoboxTransactionController extends Controller
                 'voucher_code' => $t->voucher_code,
                 'amount' => $t->amount,
                 'status' => $t->status,
+                'is_test' => (bool) $t->is_test,
                 'paid_at' => $t->paid_at?->toIso8601String(),
                 'paid_at_local' => $t->paid_at?->copy()->setTimezone(config('app.timezone'))->format('Y-m-d\TH:i'),
                 'edited' => (bool) $t->edited_at,
@@ -97,7 +98,7 @@ class PhotoboxTransactionController extends Controller
         $canManage = $request->user()?->can('photobox-manage') ?? false;
 
         $studioTx = PhotoboxTransaction::query()
-            ->selectRaw("studio_id, COUNT(*) as count, SUM(CASE WHEN status = 'paid' THEN amount ELSE 0 END) as revenue")
+            ->selectRaw("studio_id, COUNT(*) as count, SUM(CASE WHEN status = 'paid' AND is_test = 0 THEN amount ELSE 0 END) as revenue")
             ->groupBy('studio_id')->get()->keyBy('studio_id');
 
         return Inertia::render('Dashboard/PhotoboxTransactions/Index', [

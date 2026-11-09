@@ -169,7 +169,7 @@ class PhotoboxSyncController extends Controller
                 // hanya http(s): dipakai sebagai link & pesan WhatsApp di kasir
                 'gallery_url' => ['nullable', 'string', 'max:500', 'regex:#^https?://#i'],
                 'meta' => ['nullable', 'array'],
-                // transaksi uji (mode simulasi / gateway sandbox): bukan uang asli, tidak boleh masuk laporan kasir
+                // transaksi uji (mode simulasi / gateway sandbox): disimpan & diberi label TEST, tidak dihitung sebagai pendapatan
                 'is_test' => ['nullable', 'boolean'],
             ]);
             $orderNo = is_array($row) ? (string) ($row['order_no'] ?? '') : '';
@@ -179,12 +179,9 @@ class PhotoboxSyncController extends Controller
                 continue;
             }
             $d = $v->validated();
-            if (! empty($d['is_test'])) {
-                // Dibuang sebelum disimpan: tidak ikut pendapatan, shift, maupun pemakaian kode diskon
-                $results[] = ['order_no' => $d['order_no'], 'ok' => true, 'kept' => 'test'];
-
-                continue;
-            }
+            // Transaksi uji (simulasi / sandbox) tetap disimpan supaya terlihat di riwayat, tapi bertanda is_test:
+            // tidak dihitung sebagai pendapatan dan tidak memakai kuota kode diskon.
+            $isTest = (bool) ($d['is_test'] ?? false);
             $tz = config('app.timezone');
             $paidAt = ! empty($d['paid_at']) ? Carbon::parse($d['paid_at'])->setTimezone($tz) : null;
             $createdAt = ! empty($d['created_at']) ? Carbon::parse($d['created_at'])->setTimezone($tz) : null;
@@ -228,7 +225,7 @@ class PhotoboxSyncController extends Controller
             if ($already) { // tanda "sudah dihitung" tidak boleh hilang walau kiriman ulang tidak membawa meta
                 $meta = array_merge(is_array($meta) ? $meta : [], ['promo_redeemed' => true]);
             }
-            if ($code !== '' && $d['status'] === 'paid' && ! $already) {
+            if ($code !== '' && $d['status'] === 'paid' && ! $already && ! $isTest) {
                 app(PhotoboxDiscountService::class)->redeem($code);
                 $meta['promo_redeemed'] = true;
             }
@@ -245,6 +242,7 @@ class PhotoboxSyncController extends Controller
                     'voucher_code' => isset($d['voucher_code']) ? strtoupper($d['voucher_code']) : null,
                     'amount' => $d['amount'],
                     'status' => $d['status'],
+                    'is_test' => $isTest,
                     'paid_at' => $paidAt,
                     'booth_created_at' => $createdAt,
                     'session_id' => $d['session_id'] ?? null,
