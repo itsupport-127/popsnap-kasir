@@ -28,6 +28,7 @@ class PhotoboxTransactionController extends Controller
             'method' => $request->input('method'),
             'status' => $request->input('status'),
             'search' => $request->input('search'),
+            'test' => in_array($request->input('test'), ['only', 'hide'], true) ? $request->input('test') : null,
         ];
         [$start, $end] = PhotoboxStats::range($filters['period'], $filters['start_date'], $filters['end_date']);
         $studioId = $filters['studio_id'] ? (int) $filters['studio_id'] : null;
@@ -42,6 +43,8 @@ class PhotoboxTransactionController extends Controller
             ->when($studioId, fn ($q) => $q->where('studio_id', $studioId))
             ->when($filters['method'], fn ($q, $v) => $q->where('method', $v))
             ->when($filters['status'], fn ($q, $v) => $q->where('status', $v))
+            ->when($filters['test'] === 'only', fn ($q) => $q->where('is_test', true))
+            ->when($filters['test'] === 'hide', fn ($q) => $q->real())
             ->when($filters['search'], fn ($q, $s) => $q->where(fn ($w) => $w
                 ->where('order_no', 'like', "%{$s}%")
                 ->orWhere('voucher_code', 'like', "%{$s}%")
@@ -117,6 +120,7 @@ class PhotoboxTransactionController extends Controller
                 'status' => $s->reportSummary(),
             ]),
             'galleryStatusOn' => GalleryStatus::baseUrl() !== null,
+            'testCount' => PhotoboxTransaction::query()->where('is_test', true)->when($studioId, fn ($q) => $q->where('studio_id', $studioId))->count(),
             'canManage' => $canManage,
             'canEdit' => $request->user()?->can('photobox-edit') ?? false,
             'canDelete' => $request->user()?->can('photobox-delete') ?? false,
@@ -191,6 +195,31 @@ class PhotoboxTransactionController extends Controller
         ])->save();
 
         return back()->with('success', 'Transaksi '.$transaction->order_no.' diperbarui.');
+    }
+
+    /** Tandai / lepas tanda TEST (mis. gateway masih sandbox padahal uang asli). Pendapatan, shift & dashboard otomatis menyesuaikan; booth ikut menerima perubahannya. */
+    public function toggleTest(Request $request, PhotoboxTransaction $transaction): RedirectResponse
+    {
+        $data = $request->validate(['is_test' => ['required', 'boolean']]);
+        $transaction->forceFill(['is_test' => (bool) $data['is_test'], 'edited_at' => now()])->save();
+
+        return back()->with('success', 'Transaksi '.$transaction->order_no.($transaction->is_test ? ' ditandai TEST (tidak dihitung pendapatan).' : ' ditandai transaksi asli (dihitung pendapatan).'));
+    }
+
+    /**
+     * Hapus transaksi TEST sekaligus (soft delete, tidak mengubah pendapatan karena memang tidak dihitung).
+     * Maksimal 100 per klik supaya booth bisa menarik semua perubahannya (satu halaman perubahan = 200 baris); ulangi kalau masih ada.
+     */
+    public function destroyTests(Request $request): RedirectResponse
+    {
+        $studioId = $request->filled('studio_id') ? (int) $request->input('studio_id') : null;
+        $ids = PhotoboxTransaction::query()->where('is_test', true)
+            ->when($studioId, fn ($q) => $q->where('studio_id', $studioId))
+            ->orderBy('id')->limit(100)->pluck('id');
+        $deleted = $ids->isEmpty() ? 0 : PhotoboxTransaction::query()->whereIn('id', $ids)->delete();
+        $left = PhotoboxTransaction::query()->where('is_test', true)->when($studioId, fn ($q) => $q->where('studio_id', $studioId))->count();
+
+        return back()->with('success', $deleted.' transaksi TEST dihapus'.($left > 0 ? ", masih ada {$left}: klik lagi untuk melanjutkan." : '.'));
     }
 
     /** Hapus = soft delete: pendapatan berkurang, dan kiriman ulang dari booth tidak akan membuatnya muncul lagi. */

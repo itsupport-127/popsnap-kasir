@@ -119,6 +119,8 @@ Route::group(['prefix' => 'dashboard', 'middleware' => ['auth', 'verified']], fu
     Route::get('photobox-customers', [PhotoboxTransactionController::class, 'customerSearch'])->middleware('permission:photobox-access')->name('photobox-customers.search');
     Route::put('photobox-transactions/{transaction}/contact', [PhotoboxTransactionController::class, 'saveContact'])->middleware('permission:photobox-access')->name('photobox-transactions.contact');
     Route::put('photobox-transactions/{transaction}', [PhotoboxTransactionController::class, 'update'])->middleware('permission:photobox-edit')->name('photobox-transactions.update');
+    Route::put('photobox-transactions/{transaction}/test', [PhotoboxTransactionController::class, 'toggleTest'])->middleware('permission:photobox-edit')->name('photobox-transactions.test');
+    Route::delete('photobox-transactions-test', [PhotoboxTransactionController::class, 'destroyTests'])->middleware('permission:photobox-delete')->name('photobox-transactions.destroy-test');
     Route::delete('photobox-transactions/{transaction}', [PhotoboxTransactionController::class, 'destroy'])->middleware('permission:photobox-delete')->name('photobox-transactions.destroy');
     Route::post('photobox-studios', [PhotoboxTransactionController::class, 'storeStudio'])->middleware('permission:photobox-manage')->name('photobox-studios.store');
     Route::post('photobox-studios/{studio}/token', [PhotoboxTransactionController::class, 'regenerateToken'])->middleware('permission:photobox-manage')->name('photobox-studios.token');

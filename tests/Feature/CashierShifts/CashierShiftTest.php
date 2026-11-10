@@ -279,6 +279,33 @@ class CashierShiftTest extends TestCase
         $this->assertStringContainsString('Emma Room', $html);
     }
 
+    public function test_photobox_sales_are_counted_in_only_one_of_overlapping_shifts(): void
+    {
+        $first = $this->createUserWithPermissions(['cashier-shifts-access']);
+        $second = $this->createUserWithPermissions(['cashier-shifts-access']);
+
+        $mk = fn ($user, $openedAt) => CashierShift::create([
+            'user_id' => $user->id, 'opened_by' => $user->id, 'opened_at' => $openedAt,
+            'opening_cash' => 0, 'expected_cash' => 0, 'status' => CashierShift::STATUS_OPEN,
+        ]);
+        $shiftA = $mk($first, now()->subHours(3));  // dibuka lebih awal
+        $shiftB = $mk($second, now()->subHours(2)); // tumpang tindih dengan A
+
+        $studio = new PhotoboxStudio(['name' => 'Studio Emma', 'is_active' => true, 'token_hash' => bin2hex(random_bytes(32))]);
+        $studio->save();
+        PhotoboxTransaction::create([
+            'order_no' => 'PB-O-0001', 'studio_id' => $studio->id, 'template_name' => 'Emma Room', 'mode' => 'photo',
+            'method' => 'qris', 'amount' => 35000, 'status' => 'paid', 'paid_at' => now()->subHour(),
+        ]);
+
+        $service = app(\App\Services\CashierShiftService::class);
+        // hanya shift yang dibuka paling awal yang menghitungnya, jadi tidak dobel
+        $this->assertSame(35000, $service->calculatePhotoboxTotals($shiftA)['photobox_sales_total']);
+        $this->assertSame(0, $service->calculatePhotoboxTotals($shiftB)['photobox_sales_total']);
+        $this->assertSame(1, $service->calculatePhotoboxRecap($shiftA)['sessions']);
+        $this->assertSame(0, $service->calculatePhotoboxRecap($shiftB)['sessions']);
+    }
+
     public function test_admin_with_force_close_permission_can_close_other_cashier_shift(): void
     {
         $cashier = $this->createUserWithPermissions([

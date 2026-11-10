@@ -5,7 +5,7 @@ import Table from "@/Components/Dashboard/Table";
 import Pagination from "@/Components/Dashboard/Pagination";
 import Swal from "sweetalert2";
 import toast from "react-hot-toast";
-import { IconBrandWhatsapp, IconCamera, IconChevronDown, IconCopy, IconExternalLink, IconKey, IconPencil, IconPlus, IconSearch, IconTrash, IconX } from "@tabler/icons-react";
+import { IconBrandWhatsapp, IconCamera, IconChevronDown, IconCopy, IconExternalLink, IconFlask, IconKey, IconPencil, IconPlus, IconSearch, IconTrash, IconX } from "@tabler/icons-react";
 
 const rupiah = (v = 0) =>
     new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", minimumFractionDigits: 0 }).format(v);
@@ -146,7 +146,7 @@ function WaContactModal({ t, onClose }) {
     );
 }
 
-export default function Index({ filters, range, transactions, summary, studios, galleryStatusOn, canManage, canEdit, canDelete, apiUrl, newToken, newTokenStudio }) {
+export default function Index({ filters, range, transactions, summary, studios, galleryStatusOn, canManage, canEdit, canDelete, testCount = 0, apiUrl, newToken, newTokenStudio }) {
     const [showStudios, setShowStudios] = useState(!!newToken || studios.length === 0);
     const form = useForm({ name: "" });
     const [editing, setEditing] = useState(null);
@@ -162,8 +162,8 @@ export default function Index({ filters, range, transactions, summary, studios, 
         return () => clearInterval(id);
     }, [hasPending]);
     useEffect(() => { setSearchText(filters.search || ""); }, [filters.search]); // ikut berubah kalau halaman dibuka dengan pencarian dari link lain
-    const hasFilters = !!(filters.studio_id || filters.method || filters.status || filters.search);
-    const resetFilters = () => { setSearchText(""); go({ studio_id: "", method: "", status: "", search: "" }); };
+    const hasFilters = !!(filters.studio_id || filters.method || filters.status || filters.search || filters.test);
+    const resetFilters = () => { setSearchText(""); go({ studio_id: "", method: "", status: "", search: "", test: "" }); };
 
     const renameStudio = (s) => {
         Swal.fire({
@@ -232,6 +232,34 @@ export default function Index({ filters, range, transactions, summary, studios, 
             cancelButtonText: "Batal",
         }).then((r) => {
             if (r.isConfirmed) router.delete(route("photobox-transactions.destroy", t.id), { preserveScroll: true });
+        });
+    };
+    // Tandai / lepas tanda TEST. Dipakai kalau gateway masih sandbox padahal uang asli (atau sebaliknya): pendapatan & shift langsung menyesuaikan.
+    const toggleTest = (t) => {
+        const toTest = !t.is_test;
+        Swal.fire({
+            title: toTest ? "Tandai sebagai TEST?" : "Tandai sebagai transaksi asli?",
+            html: `<b>${t.order_no}</b><br/>${toTest ? "Transaksi ini tidak akan dihitung sebagai pendapatan, shift, dan dashboard." : `Transaksi ini akan dihitung sebagai pendapatan${t.amount > 0 ? ` (${rupiah(t.amount)})` : ""}.`}`,
+            icon: "question",
+            showCancelButton: true,
+            confirmButtonText: toTest ? "Ya, tandai TEST" : "Ya, ini transaksi asli",
+            cancelButtonText: "Batal",
+        }).then((r) => {
+            if (r.isConfirmed) router.put(route("photobox-transactions.test", t.id), { is_test: toTest }, { preserveScroll: true });
+        });
+    };
+    const removeAllTests = () => {
+        Swal.fire({
+            title: "Hapus transaksi TEST?",
+            html: `${testCount} transaksi TEST${filters.studio_id ? " pada studio terpilih" : ""} akan dihapus dari riwayat (maksimal 100 sekali klik). Pendapatan tidak berubah karena memang tidak dihitung.`,
+            icon: "warning",
+            showCancelButton: true,
+            confirmButtonColor: "#ef4444",
+            cancelButtonColor: "#64748b",
+            confirmButtonText: "Ya, hapus",
+            cancelButtonText: "Batal",
+        }).then((r) => {
+            if (r.isConfirmed) router.delete(route("photobox-transactions.destroy-test"), { data: filters.studio_id ? { studio_id: filters.studio_id } : {}, preserveScroll: true });
         });
     };
     const go = (next) => router.get(route("photobox-transactions.index"), { ...filters, ...next }, { preserveState: true, replace: true });
@@ -336,6 +364,7 @@ export default function Index({ filters, range, transactions, summary, studios, 
                         ["Studio", "studio_id", "Semua studio", studios.map((s) => [s.id, s.name])],
                         ["Metode bayar", "method", "Semua metode", Object.entries(METHOD_LABEL)],
                         ["Status", "status", "Semua status", Object.entries(STATUS_LABEL)],
+                        ["Transaksi TEST", "test", "Tampilkan semua", [["hide", "Sembunyikan TEST"], ["only", "Hanya TEST"]]],
                     ].map(([label, key, allLabel, options]) => (
                         <label key={key} className="block">
                             <span className="mb-1 block text-xs font-medium text-slate-500 dark:text-slate-400">{label}</span>
@@ -372,6 +401,12 @@ export default function Index({ filters, range, transactions, summary, studios, 
                 )}
             </div>
             <p className="mb-3 text-xs text-slate-500">Periode: {range.start} s/d {range.end}</p>
+            {testCount > 0 && (
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-300">
+                    <span><b>{testCount} transaksi TEST</b> (simulasi / sandbox) tampil di riwayat tapi tidak dihitung sebagai pendapatan.</span>
+                    {canDelete && <button type="button" onClick={removeAllTests} className="rounded-lg border border-amber-300 bg-white px-3 py-1.5 font-medium text-amber-800 hover:bg-amber-100 dark:border-amber-800 dark:bg-transparent dark:text-amber-300">Hapus transaksi TEST</button>}
+                </div>
+            )}
 
             <div className="mb-5 grid grid-cols-2 gap-3 md:grid-cols-4">
                 <Stat label="Pendapatan photobox (lunas)" value={rupiah(summary.revenue)} />
@@ -462,6 +497,7 @@ export default function Index({ filters, range, transactions, summary, studios, 
                                 {showActions && (
                                     <Table.Td>
                                         <div className="flex justify-end gap-2">
+                                            {canEdit && <button type="button" onClick={() => toggleTest(t)} title={t.is_test ? "Tandai sebagai transaksi asli" : "Tandai sebagai TEST"} className={`rounded-lg border p-2 ${t.is_test ? "border-violet-300 bg-violet-200 text-violet-700 hover:bg-violet-300 dark:border-violet-800 dark:bg-violet-900/50 dark:text-violet-300" : "border-violet-200 bg-violet-100 text-violet-600 hover:bg-violet-200 dark:border-violet-800 dark:bg-violet-900/40 dark:text-violet-400"}`}><IconFlask size={16} /></button>}
                                             {canEdit && <button type="button" onClick={() => openEdit(t)} title="Edit" className="rounded-lg border border-amber-200 bg-amber-100 p-2 text-amber-600 hover:bg-amber-200 dark:border-amber-800 dark:bg-amber-900/40 dark:text-amber-400"><IconPencil size={16} /></button>}
                                             {canDelete && <button type="button" onClick={() => removeTx(t)} title="Hapus" className="rounded-lg border border-rose-200 bg-rose-100 p-2 text-rose-600 hover:bg-rose-200 dark:border-rose-800 dark:bg-rose-900/40 dark:text-rose-400"><IconTrash size={16} /></button>}
                                         </div>

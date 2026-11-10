@@ -64,6 +64,49 @@ class PhotoboxSyncTest extends TestCase
         $this->assertSame(35000, PhotoboxStats::summary(now()->startOfDay(), now()->endOfDay())['revenue']);
     }
 
+    public function test_unmarking_test_counts_revenue_and_is_pushed_to_booth_as_a_change(): void
+    {
+        [$studio, $token] = $this->studio();
+        $this->withToken($token)->postJson('/api/photobox/transactions', ['transactions' => [
+            $this->row(['order_no' => 'PB-EMMA-261109-0003', 'amount' => 40000, 'is_test' => true]),
+        ]])->assertOk();
+        $this->assertSame(0, PhotoboxStats::summary(now()->startOfDay(), now()->endOfDay())['revenue']);
+
+        // kasir melepas tanda TEST (sama seperti tombol "tandai sebagai transaksi asli")
+        $tx = PhotoboxTransaction::where('order_no', 'PB-EMMA-261109-0003')->firstOrFail();
+        $tx->forceFill(['is_test' => false, 'edited_at' => now()])->save();
+
+        $this->assertSame(40000, PhotoboxStats::summary(now()->startOfDay(), now()->endOfDay())['revenue']);
+        $this->withToken($token)->getJson('/api/photobox/changes')->assertOk()
+            ->assertJsonPath('changes.0.order_no', 'PB-EMMA-261109-0003')
+            ->assertJsonPath('changes.0.is_test', false);
+
+        // booth mengirim ulang baris yang sama (masih is_test di sisinya): hasil edit kasir TIDAK ditimpa
+        $this->withToken($token)->postJson('/api/photobox/transactions', ['transactions' => [
+            $this->row(['order_no' => 'PB-EMMA-261109-0003', 'amount' => 40000, 'is_test' => true]),
+        ]])->assertOk();
+        $this->assertDatabaseHas('photobox_transactions', ['order_no' => 'PB-EMMA-261109-0003', 'is_test' => false]);
+    }
+
+    public function test_mark_test_command_flags_old_transactions_in_range_and_can_undo(): void
+    {
+        [$studio, $token] = $this->studio();
+        $this->withToken($token)->postJson('/api/photobox/transactions', ['transactions' => [
+            $this->row(['order_no' => 'PB-EMMA-261109-0004', 'amount' => 35000]),
+        ]])->assertOk();
+        $today = now()->toDateString();
+
+        $this->artisan('photobox:mark-test', ['--from' => $today, '--to' => $today, '--dry-run' => true])->assertExitCode(0);
+        $this->assertDatabaseHas('photobox_transactions', ['order_no' => 'PB-EMMA-261109-0004', 'is_test' => false]);
+
+        $this->artisan('photobox:mark-test', ['--from' => $today, '--to' => $today, '--yes' => true])->assertExitCode(0);
+        $this->assertDatabaseHas('photobox_transactions', ['order_no' => 'PB-EMMA-261109-0004', 'is_test' => true]);
+        $this->assertSame(0, PhotoboxStats::summary(now()->startOfDay(), now()->endOfDay())['revenue']);
+
+        $this->artisan('photobox:mark-test', ['--from' => $today, '--to' => $today, '--undo' => true, '--yes' => true])->assertExitCode(0);
+        $this->assertDatabaseHas('photobox_transactions', ['order_no' => 'PB-EMMA-261109-0004', 'is_test' => false]);
+    }
+
     public function test_rejects_missing_or_wrong_token(): void
     {
         $this->postJson('/api/photobox/transactions', ['transactions' => [$this->row()]])->assertStatus(401);

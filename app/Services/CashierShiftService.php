@@ -145,9 +145,31 @@ class CashierShiftService
     }
 
     /**
-     * Penjualan photobox selama shift: hanya yang LUNAS dan bernilai (amount > 0), tanpa yang dihapus di kasir.
+     * Transaksi photobox yang LUNAS, asli (bukan TEST), dan milik shift ini.
+     * Photobox tidak punya kasir, jadi dikaitkan lewat waktu bayar. Kalau beberapa shift sedang buka bersamaan,
+     * satu transaksi hanya dihitung di SATU shift: yang dibuka paling awal (seri: id terkecil), supaya tidak dobel.
+     */
+    private function ownedPhotoboxQuery(CashierShift $shift)
+    {
+        [$start, $end] = $this->shiftWindow($shift);
+
+        return PhotoboxTransaction::query()
+            ->real()
+            ->where('status', 'paid')
+            ->whereBetween('paid_at', [$start, $end])
+            ->whereNotExists(function ($q) use ($shift) {
+                $q->select(DB::raw(1))->from('cashier_shifts as other')
+                    ->where('other.id', '!=', $shift->id)
+                    ->whereColumn('other.opened_at', '<=', 'photobox_transactions.paid_at')
+                    ->where(fn ($w) => $w->whereNull('other.closed_at')->orWhereColumn('other.closed_at', '>=', 'photobox_transactions.paid_at'))
+                    ->where(fn ($w) => $w->where('other.opened_at', '<', $shift->opened_at)
+                        ->orWhere(fn ($x) => $x->where('other.opened_at', $shift->opened_at)->where('other.id', '<', $shift->id)));
+            });
+    }
+
+    /**
+     * Penjualan photobox selama shift: hanya yang bernilai (amount > 0), tanpa yang dihapus di kasir dan tanpa transaksi TEST.
      * Aturannya sama dengan PhotoboxStats / dashboard supaya angkanya konsisten.
-     * Transaksi uji (is_test: mode simulasi / sandbox) tidak ikut terhitung.
      *
      * @return array{photobox_sales_total: int, photobox_transactions_count: int}
      */
@@ -157,13 +179,8 @@ class CashierShiftService
             return ['photobox_sales_total' => 0, 'photobox_transactions_count' => 0];
         }
 
-        [$start, $end] = $this->shiftWindow($shift);
-
-        $row = PhotoboxTransaction::query()
-            ->real()
-            ->where('status', 'paid')
+        $row = $this->ownedPhotoboxQuery($shift)
             ->where('amount', '>', 0)
-            ->whereBetween('paid_at', [$start, $end])
             ->selectRaw('COALESCE(SUM(amount), 0) as total, COUNT(*) as cnt')
             ->first();
 
@@ -203,14 +220,20 @@ class CashierShiftService
             return ['sessions' => 0, 'transactions' => 0, 'revenue' => 0, 'items' => []];
         }
 
-        [$start, $end] = $this->shiftWindow($shift);
-        $stats = PhotoboxStats::summary($start, $end);
+        $items = $this->ownedPhotoboxQuery($shift)
+            ->select(DB::raw("COALESCE(template_name, 'Tanpa nama') as name"), DB::raw('COUNT(*) as qty'), DB::raw('SUM(amount) as revenue'))
+            ->groupBy('name')
+            ->orderByDesc('qty')
+            ->get()
+            ->map(fn ($r) => ['name' => $r->name, 'qty' => (int) $r->qty, 'revenue' => (int) $r->revenue])
+            ->values();
+        $totals = $this->calculatePhotoboxTotals($shift);
 
         return [
-            'sessions' => (int) $stats['sessions'],
-            'transactions' => (int) $stats['transactions'],
-            'revenue' => (int) $stats['revenue'],
-            'items' => collect($stats['byTemplate'])->all(),
+            'sessions' => (int) $items->sum('qty'),
+            'transactions' => $totals['photobox_transactions_count'],
+            'revenue' => $totals['photobox_sales_total'],
+            'items' => $items->all(),
         ];
     }
 

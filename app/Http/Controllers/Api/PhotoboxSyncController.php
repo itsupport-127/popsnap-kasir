@@ -113,6 +113,7 @@ class PhotoboxSyncController extends Controller
                 'method' => $t->method,
                 'amount' => (int) $t->amount,
                 'status' => $t->status,
+                'is_test' => (bool) $t->is_test,
                 'paid_at' => $t->paid_at?->toIso8601String(),
                 'changed_at' => $changedAt?->toIso8601String(),
             ];
