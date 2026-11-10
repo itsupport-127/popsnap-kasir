@@ -7,6 +7,7 @@ use App\Models\PhotoboxStudio;
 use App\Models\PhotoboxTransaction;
 use App\Models\Transaction;
 use App\Services\GalleryStatus;
+use App\Services\PhotoboxDiscountService;
 use App\Services\PhotoboxStats;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -185,6 +186,10 @@ class PhotoboxTransactionController extends Controller
             $paidAt = now();
         }
 
+        if ($data['status'] !== 'paid') {
+            $this->releasePromoQuota($transaction); // refund / batal: kuota kode diskon kembali
+        }
+
         $transaction->forceFill([
             'template_name' => $data['template_name'] ?: null,
             'method' => $data['method'],
@@ -222,10 +227,24 @@ class PhotoboxTransactionController extends Controller
         return back()->with('success', $deleted.' transaksi TEST dihapus'.($left > 0 ? ", masih ada {$left}: klik lagi untuk melanjutkan." : '.'));
     }
 
+    /** Kembalikan kuota kode diskon yang dipakai transaksi ini (sekali saja; tanda promo_counted dimatikan). */
+    private function releasePromoQuota(PhotoboxTransaction $transaction): void
+    {
+        $meta = $transaction->meta ?? [];
+        if (empty($meta['promo_counted']) || empty($meta['promo_code'])) {
+            return;
+        }
+        app(PhotoboxDiscountService::class)->release((string) $meta['promo_code']);
+        $meta['promo_counted'] = false;
+        $transaction->meta = $meta;
+        $transaction->save();
+    }
+
     /** Hapus = soft delete: pendapatan berkurang, dan kiriman ulang dari booth tidak akan membuatnya muncul lagi. */
     public function destroy(PhotoboxTransaction $transaction): RedirectResponse
     {
         $orderNo = $transaction->order_no;
+        $this->releasePromoQuota($transaction);
         $transaction->delete();
 
         return back()->with('success', 'Transaksi '.$orderNo.' dihapus.');

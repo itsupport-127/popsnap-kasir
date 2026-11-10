@@ -131,4 +131,18 @@ class PhotoboxDiscountService
 
         return $q->increment('used_count') > 0;
     }
+
+    /**
+     * Kembalikan satu pemakaian kode (transaksi dihapus / di-refund / batal di kasir) supaya kuota tidak habis oleh transaksi yang tidak jadi.
+     * Aman dipanggil berulang: hitungan tidak pernah di bawah 0.
+     */
+    public function release(string $code): bool
+    {
+        $promo = Promo::query()->whereRaw('UPPER(code) = ?', [strtoupper(trim($code))])->where('activation_mode', Promo::ACTIVATION_MANUAL)->first();
+        if (! $promo || $promo->isPersonal()) {
+            return false;
+        }
+
+        return Promo::query()->whereKey($promo->id)->where('used_count', '>', 0)->decrement('used_count') > 0;
+    }
 }

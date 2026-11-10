@@ -4,6 +4,7 @@ namespace Tests\Feature\Photobox;
 
 use App\Models\PhotoboxStudio;
 use App\Models\PhotoboxTransaction;
+use App\Services\PhotoboxDiscountService;
 use App\Models\Promo;
 use Illuminate\Support\Facades\Schema;
 use Tests\TestCase;
@@ -158,5 +159,27 @@ class PhotoboxDiscountTest extends TestCase
             $this->withToken($t)->postJson('/api/photobox/transactions', ['transactions' => [array_merge($paid, ['order_no' => "PB-EMMA-261109-{$n}"])]])->assertOk();
         }
         $this->assertSame(2, (int) $p->fresh()->used_count, 'maks_uses=2 tidak boleh terlewati');
+    }
+
+    public function test_quota_is_only_marked_counted_when_it_really_increased_and_can_be_released(): void
+    {
+        $p = $this->promo(['activation_mode' => 'manual', 'code' => 'DUA', 'max_uses' => 1, 'discount_value' => 5000]);
+        $t = $this->token();
+        $row = fn (string $no) => ['order_no' => $no, 'template_id' => 't1', 'mode' => 'photo', 'method' => 'qris', 'amount' => 30000, 'status' => 'paid',
+            'paid_at' => now()->toIso8601String(), 'meta' => ['gross_amount' => 35000, 'discount' => 5000, 'promo_code' => 'DUA', 'promo_name' => 'Hemat']];
+
+        $this->withToken($t)->postJson('/api/photobox/transactions', ['transactions' => [$row('PB-EMMA-261109-1001')]])->assertOk();
+        $this->withToken($t)->postJson('/api/photobox/transactions', ['transactions' => [$row('PB-EMMA-261109-1002')]])->assertOk(); // kuota 1 sudah habis
+        $this->assertSame(1, (int) $p->fresh()->used_count);
+        $this->assertTrue(PhotoboxTransaction::where('order_no', 'PB-EMMA-261109-1001')->first()->meta['promo_counted']);
+        $second = PhotoboxTransaction::where('order_no', 'PB-EMMA-261109-1002')->first();
+        $this->assertTrue($second->meta['promo_redeemed']);
+        $this->assertFalse($second->meta['promo_counted'], 'kuota habis: tidak pernah menambah hitungan, jadi tidak boleh dikembalikan nanti');
+
+        $svc = app(PhotoboxDiscountService::class);
+        $this->assertTrue($svc->release('dua'));
+        $this->assertSame(0, (int) $p->fresh()->used_count);
+        $this->assertFalse($svc->release('DUA'), 'tidak boleh di bawah 0');
+        $this->assertSame(0, (int) $p->fresh()->used_count);
     }
 }

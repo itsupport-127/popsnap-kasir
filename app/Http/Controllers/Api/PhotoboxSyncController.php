@@ -6,9 +6,11 @@ use App\Http\Controllers\Controller;
 use App\Models\PhotoboxStudio;
 use App\Models\PhotoboxTransaction;
 use App\Services\PhotoboxDiscountService;
+use Illuminate\Contracts\Cache\LockTimeoutException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Validator;
 
 /**
@@ -183,6 +185,18 @@ class PhotoboxSyncController extends Controller
             // Transaksi uji (simulasi / sandbox) tetap disimpan supaya terlihat di riwayat, tapi bertanda is_test:
             // tidak dihitung sebagai pendapatan dan tidak memakai kuota kode diskon.
             $isTest = (bool) ($d['is_test'] ?? false);
+
+            // Satu nomor transaksi diproses satu per satu: dua kiriman ganda yang datang bersamaan tidak boleh sama-sama
+            // melihat "belum dihitung" lalu memakai kuota kode diskon dua kali.
+            $lock = Cache::lock('photobox-sync:'.$d['order_no'], 20);
+            try {
+                $lock->block(5);
+            } catch (LockTimeoutException) {
+                $results[] = ['order_no' => $d['order_no'], 'ok' => false, 'error' => 'Transaksi sedang diproses, akan dicoba lagi.'];
+
+                continue;
+            }
+            try {
             $tz = config('app.timezone');
             $paidAt = ! empty($d['paid_at']) ? Carbon::parse($d['paid_at'])->setTimezone($tz) : null;
             $createdAt = ! empty($d['created_at']) ? Carbon::parse($d['created_at'])->setTimezone($tz) : null;
@@ -224,7 +238,10 @@ class PhotoboxSyncController extends Controller
             $code = is_array($meta) ? strtoupper(trim((string) ($meta['promo_code'] ?? ''))) : '';
             $already = (bool) ($existing?->meta['promo_redeemed'] ?? false);
             if ($already) { // tanda "sudah dihitung" tidak boleh hilang walau kiriman ulang tidak membawa meta
-                $meta = array_merge(is_array($meta) ? $meta : [], ['promo_redeemed' => true]);
+                $meta = array_merge(is_array($meta) ? $meta : [], [
+                    'promo_redeemed' => true,
+                    'promo_counted' => (bool) ($existing?->meta['promo_counted'] ?? false),
+                ]);
             }
             // Kontak WhatsApp diisi di kasir (bukan dari booth): jangan hilang kalau booth mengirim ulang baris ini
             $oldMeta = $existing?->meta ?? [];
@@ -235,7 +252,9 @@ class PhotoboxSyncController extends Controller
                 }
             }
             if ($code !== '' && $d['status'] === 'paid' && ! $already && ! $isTest) {
-                app(PhotoboxDiscountService::class)->redeem($code);
+                // promo_redeemed = sudah dicoba dihitung (tidak diulang); promo_counted = benar-benar menambah hitungan
+                // (false kalau kuota sudah habis), supaya pembatalan nanti tidak mengurangi hitungan yang tidak pernah bertambah.
+                $meta['promo_counted'] = app(PhotoboxDiscountService::class)->redeem($code);
                 $meta['promo_redeemed'] = true;
             }
 
@@ -261,6 +280,9 @@ class PhotoboxSyncController extends Controller
                 ]
             );
             $results[] = ['order_no' => $d['order_no'], 'ok' => true];
+            } finally {
+                $lock->release();
+            }
         }
 
         $studio->forceFill(['last_seen_at' => now()])->save();

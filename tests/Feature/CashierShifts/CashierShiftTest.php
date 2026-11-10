@@ -209,7 +209,7 @@ class CashierShiftTest extends TestCase
                 'close_notes' => 'Cash count final',
             ]);
 
-        $response->assertRedirect(route('cashier-shifts.show', $shift));
+        $response->assertRedirect(route('cashier-shifts.show', ['cashierShift' => $shift->id, 'justClosed' => 1]));
         $this->assertDatabaseHas('cashier_shifts', [
             'id' => $shift->id,
             'status' => CashierShift::STATUS_CLOSED,
@@ -259,7 +259,7 @@ class CashierShiftTest extends TestCase
 
         $this->actingAs($cashier)
             ->post(route('cashier-shifts.close', $shift), ['actual_cash' => 100000])
-            ->assertRedirect(route('cashier-shifts.show', $shift));
+            ->assertRedirect(route('cashier-shifts.show', ['cashierShift' => $shift->id, 'justClosed' => 1]));
 
         $this->assertDatabaseHas('cashier_shifts', [
             'id' => $shift->id,
@@ -333,7 +333,7 @@ class CashierShiftTest extends TestCase
                 'actual_cash' => 80000,
             ]);
 
-        $response->assertRedirect(route('cashier-shifts.show', $shift));
+        $response->assertRedirect(route('cashier-shifts.show', ['cashierShift' => $shift->id, 'justClosed' => 1]));
         $this->assertDatabaseHas('cashier_shifts', [
             'id' => $shift->id,
             'closed_by' => $admin->id,
