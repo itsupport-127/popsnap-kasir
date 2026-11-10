@@ -107,6 +107,26 @@ class PhotoboxSyncTest extends TestCase
         $this->assertDatabaseHas('photobox_transactions', ['order_no' => 'PB-EMMA-261109-0004', 'is_test' => false]);
     }
 
+    public function test_resend_from_booth_keeps_whatsapp_contact_saved_in_kasir(): void
+    {
+        [$studio, $token] = $this->studio();
+        $this->withToken($token)->postJson('/api/photobox/transactions', ['transactions' => [$this->row(['order_no' => 'PB-EMMA-261109-0005'])]])->assertOk();
+
+        $tx = PhotoboxTransaction::where('order_no', 'PB-EMMA-261109-0005')->firstOrFail();
+        $tx->meta = ['wa_number' => '6281234567890', 'wa_name' => 'Budi'];
+        $tx->save();
+
+        // booth mengirim ulang (mis. backfill link galeri) dengan meta sendiri: kontak WA dari kasir tidak boleh hilang
+        $this->withToken($token)->postJson('/api/photobox/transactions', ['transactions' => [
+            $this->row(['order_no' => 'PB-EMMA-261109-0005', 'gallery_url' => 'https://galeri.test/s/ABC', 'meta' => ['discount' => 0]]),
+        ]])->assertOk();
+
+        $fresh = PhotoboxTransaction::where('order_no', 'PB-EMMA-261109-0005')->firstOrFail();
+        $this->assertSame('6281234567890', $fresh->meta['wa_number']);
+        $this->assertSame('Budi', $fresh->meta['wa_name']);
+        $this->assertSame('https://galeri.test/s/ABC', $fresh->gallery_url);
+    }
+
     public function test_rejects_missing_or_wrong_token(): void
     {
         $this->postJson('/api/photobox/transactions', ['transactions' => [$this->row()]])->assertStatus(401);

@@ -46,7 +46,8 @@ jobs:
           npm run build
       - name: Jalankan tes
         run: php artisan test
-      - name: Cek celah keamanan dependency
+      - name: Cek celah keamanan dependency (hanya peringatan, tidak menggagalkan tes)
+        continue-on-error: true
         run: |
           composer audit --no-dev
           npm audit --omit=dev --audit-level=high

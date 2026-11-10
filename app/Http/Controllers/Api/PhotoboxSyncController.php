@@ -226,6 +226,14 @@ class PhotoboxSyncController extends Controller
             if ($already) { // tanda "sudah dihitung" tidak boleh hilang walau kiriman ulang tidak membawa meta
                 $meta = array_merge(is_array($meta) ? $meta : [], ['promo_redeemed' => true]);
             }
+            // Kontak WhatsApp diisi di kasir (bukan dari booth): jangan hilang kalau booth mengirim ulang baris ini
+            $oldMeta = $existing?->meta ?? [];
+            foreach (['wa_number', 'wa_name'] as $k) {
+                if (! empty($oldMeta[$k])) {
+                    $meta = is_array($meta) ? $meta : [];
+                    $meta[$k] = $oldMeta[$k];
+                }
+            }
             if ($code !== '' && $d['status'] === 'paid' && ! $already && ! $isTest) {
                 app(PhotoboxDiscountService::class)->redeem($code);
                 $meta['promo_redeemed'] = true;
