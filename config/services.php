@@ -38,6 +38,11 @@ return [
     ],
 
     // POPSNAP Galeri (VPS): dipakai kasir untuk membaca status sesi (terupload / izin foto)
+    // Jadwal backup database harian (db:backup). Mati secara bawaan; nyalakan dengan DB_BACKUP_SCHEDULE=true bila mysqldump tersedia.
+    'db_backup' => [
+        'schedule' => (bool) env('DB_BACKUP_SCHEDULE', false),
+    ],
+
     'popsnap_gallery' => [
         'url' => env('POPSNAP_GALLERY_URL'),
         // Kunci bersama dengan galeri (KASIR_API_KEY di galeri): kasir menarik sesi hasil unggah manual supaya tombol WhatsApp tetap aktif
