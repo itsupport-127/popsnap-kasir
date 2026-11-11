@@ -49,8 +49,8 @@ const GALLERY_BADGE = {
 const SOCIAL_BADGE = {
     3: ["Sosmed + Mading", "bg-emerald-100 text-emerald-700"],
     1: ["Sosmed", "bg-emerald-100 text-emerald-700"],
-    2: ["Mading", "bg-sky-100 text-sky-700"],
-    0: ["Tidak boleh dipakai", "bg-rose-100 text-rose-700"],
+    2: ["Mading", "bg-emerald-100 text-emerald-700"],
+    0: ["Tidak boleh", "bg-rose-100 text-rose-700"],
 };
 
 const PERIODS = [
