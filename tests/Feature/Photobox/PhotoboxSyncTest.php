@@ -6,6 +6,7 @@ use App\Models\PhotoboxStudio;
 use App\Models\PhotoboxTransaction;
 use App\Services\PhotoboxStats;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Http;
 use Tests\TestCase;
 
 class PhotoboxSyncTest extends TestCase
@@ -125,6 +126,71 @@ class PhotoboxSyncTest extends TestCase
         $this->assertSame('6281234567890', $fresh->meta['wa_number']);
         $this->assertSame('Budi', $fresh->meta['wa_name']);
         $this->assertSame('https://galeri.test/s/ABC', $fresh->gallery_url);
+    }
+
+    public function test_gallery_sessions_without_transaction_become_rows_and_booth_transaction_replaces_them_later(): void
+    {
+        config(['services.popsnap_gallery.url' => 'https://foto.example.com', 'services.popsnap_gallery.key' => 'kunci-rahasia']);
+        [$studio, $token] = $this->studio('Studio Emma');
+        $tok = 'ManualUpload12345';
+        Http::fake(['foto.example.com/api/v1/recent*' => Http::response(['ok' => true, 'sessions' => [
+            ['token' => $tok, 'studio' => 'studio emma', 'code' => 'EMA', 'mode' => 'photo', 'social' => 3, 'createdAt' => now()->subMinutes(5)->timestamp * 1000, 'files' => 2, 'uploaded' => 2],
+            ['token' => 'StudioAsing1234567', 'studio' => 'Studio Lain', 'code' => 'LAIN', 'mode' => 'photo', 'social' => null, 'createdAt' => now()->timestamp * 1000, 'files' => 1, 'uploaded' => 1],
+        ]])]);
+
+        // 1) sesi unggah manual dibuatkan baris (Gratis, Rp 0, ada link galeri). Nama studio dicocokkan tanpa peduli huruf besar/kecil;
+        //    kalau hanya ada satu studio aktif, nama yang tidak dikenal pun dianggap studio itu
+        $this->artisan('photobox:pull-gallery')->assertExitCode(0);
+        $row = PhotoboxTransaction::where('order_no', 'GAL-'.$tok)->firstOrFail();
+        $this->assertSame(0, (int) $row->amount);
+        $this->assertSame('free', $row->method);
+        $this->assertSame('paid', $row->status);
+        $this->assertSame('https://foto.example.com/s/'.$tok, $row->gallery_url);
+        $this->assertSame(0, PhotoboxStats::summary(now()->startOfDay(), now()->endOfDay())['revenue'], 'baris sementara tidak boleh menambah pendapatan');
+
+        // 2) dijalankan lagi: tidak dobel
+        $this->artisan('photobox:pull-gallery')->assertExitCode(0);
+        $this->assertSame(1, PhotoboxTransaction::where('gallery_url', 'https://foto.example.com/s/'.$tok)->count());
+
+        // 3) CS mengisi nomor WA di kasir, lalu booth online dan mengirim transaksi aslinya (link yang sama)
+        $row->meta = array_merge($row->meta ?? [], ['wa_number' => '6281234567890', 'wa_name' => 'Budi']);
+        $row->save();
+        $this->withToken($token)->postJson('/api/photobox/transactions', ['transactions' => [
+            $this->row(['order_no' => 'PB-EMMA-261110-0007', 'amount' => 35000, 'gallery_url' => 'https://foto.example.com/s/'.$tok]),
+        ]])->assertOk()->assertJsonPath('results.0.ok', true);
+
+        $this->assertDatabaseMissing('photobox_transactions', ['order_no' => 'GAL-'.$tok]); // diganti, bukan dobel
+        $real = PhotoboxTransaction::where('order_no', 'PB-EMMA-261110-0007')->firstOrFail();
+        $this->assertSame('6281234567890', $real->meta['wa_number']);
+        $this->assertSame('Budi', $real->meta['wa_name']);
+        $this->assertSame(35000, PhotoboxStats::summary(now()->startOfDay(), now()->endOfDay())['revenue']);
+
+        // 4) tarikan berikutnya tidak membuat baris sementara lagi (link sudah punya transaksi)
+        $this->artisan('photobox:pull-gallery')->assertExitCode(0);
+        $this->assertDatabaseMissing('photobox_transactions', ['order_no' => 'GAL-'.$tok]);
+    }
+
+    public function test_pull_gallery_is_off_without_key_and_respects_deleted_rows(): void
+    {
+        $this->studio('Studio Emma');
+        Http::fake(['*' => Http::response(['ok' => true, 'sessions' => [['token' => 'TokenHapus12345', 'studio' => 'Studio Emma', 'mode' => 'photo', 'createdAt' => now()->timestamp * 1000]]])]);
+
+        // tanpa kunci: tidak memanggil galeri sama sekali
+        config(['services.popsnap_gallery.url' => 'https://foto.example.com', 'services.popsnap_gallery.key' => '']);
+        $this->artisan('photobox:pull-gallery')->assertExitCode(0);
+        Http::assertNothingSent();
+        $this->assertSame(0, PhotoboxTransaction::count());
+
+        // dengan kunci: dibuat; dihapus di kasir: tidak dibuat ulang
+        config(['services.popsnap_gallery.key' => 'kunci-rahasia']);
+        $this->artisan('photobox:pull-gallery')->assertExitCode(0);
+        PhotoboxTransaction::where('order_no', 'GAL-TokenHapus12345')->firstOrFail()->delete();
+        $this->artisan('photobox:pull-gallery')->assertExitCode(0);
+        $this->assertSame(1, PhotoboxTransaction::withTrashed()->count());
+
+        // kunci salah di galeri (401): gagal dengan pesan jelas
+        Http::fake(['*' => Http::response(['ok' => false], 401)]);
+        $this->artisan('photobox:pull-gallery')->assertExitCode(1);
     }
 
     public function test_rejects_missing_or_wrong_token(): void

@@ -40,6 +40,8 @@ return [
     // POPSNAP Galeri (VPS): dipakai kasir untuk membaca status sesi (terupload / izin foto)
     'popsnap_gallery' => [
         'url' => env('POPSNAP_GALLERY_URL'),
+        // Kunci bersama dengan galeri (KASIR_API_KEY di galeri): kasir menarik sesi hasil unggah manual supaya tombol WhatsApp tetap aktif
+        'key' => env('POPSNAP_GALLERY_KEY'),
     ],
 
     'slack' => [

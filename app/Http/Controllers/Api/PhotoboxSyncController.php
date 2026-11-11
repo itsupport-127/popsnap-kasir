@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\PhotoboxStudio;
 use App\Models\PhotoboxTransaction;
+use App\Services\GalleryStatus;
 use App\Services\PhotoboxDiscountService;
 use Illuminate\Contracts\Cache\LockTimeoutException;
 use Illuminate\Http\JsonResponse;
@@ -205,6 +206,17 @@ class PhotoboxSyncController extends Controller
             }
 
             $existing = PhotoboxTransaction::withTrashed()->where('order_no', $d['order_no'])->first();
+            // Baris sementara dari galeri (unggah manual saat booth offline, nomor GAL-<kode>) diganti transaksi asli ini;
+            // nomor WhatsApp yang sudah diisi di kasir ikut terbawa. Tidak ada hitungan ganda (baris sementara bernilai Rp 0).
+            $carryMeta = null;
+            $replaced = null;
+            if (! $existing && ! empty($d['gallery_url']) && ($tok = GalleryStatus::tokenFromUrl($d['gallery_url']))) {
+                $ph = PhotoboxTransaction::withTrashed()->where('order_no', 'GAL-'.$tok)->where('studio_id', $studio->id)->first();
+                if ($ph && ! $ph->trashed()) {
+                    $carryMeta = array_intersect_key($ph->meta ?? [], array_flip(['wa_number', 'wa_name']));
+                    $replaced = $ph; // dihapus SETELAH transaksi asli tersimpan (kalau gagal simpan, baris sementara tidak hilang)
+                }
+            }
             if ($existing && $existing->studio_id !== $studio->id) {
                 $results[] = ['order_no' => $d['order_no'], 'ok' => false, 'error' => 'Nomor transaksi sudah dipakai studio lain.'];
 
@@ -244,7 +256,7 @@ class PhotoboxSyncController extends Controller
                 ]);
             }
             // Kontak WhatsApp diisi di kasir (bukan dari booth): jangan hilang kalau booth mengirim ulang baris ini
-            $oldMeta = $existing?->meta ?? [];
+            $oldMeta = $existing?->meta ?? $carryMeta ?? [];
             foreach (['wa_number', 'wa_name'] as $k) {
                 if (! empty($oldMeta[$k])) {
                     $meta = is_array($meta) ? $meta : [];
@@ -279,6 +291,7 @@ class PhotoboxSyncController extends Controller
                     'meta' => $meta,
                 ]
             );
+            $replaced?->forceDelete(); // baris sementara dari galeri sudah digantikan transaksi asli
             $results[] = ['order_no' => $d['order_no'], 'ok' => true];
             } finally {
                 $lock->release();
