@@ -79,11 +79,11 @@ class PhotoboxTransactionController extends Controller
         $page = $transactions->getCollection();
         $gallery = GalleryStatus::fetch($page->map(fn ($r) => GalleryStatus::tokenFromUrl($r['gallery_url']))->filter()->all());
         // Baris yang belum lengkap di kode link-nya sendiri: cari lewat nomor transaksi (mungkin sudah terunggah dengan kode link lain)
-        $incomplete = $page->filter(function ($r) use ($gallery) {
+        $incomplete = collect($page->all())->filter(function ($r) use ($gallery) {
             $g = ($t = GalleryStatus::tokenFromUrl($r['gallery_url'])) ? ($gallery[$t] ?? null) : null;
 
             return ! $g || ! empty($g['expired']) ? false : (($g['files'] ?? 0) === 0 || ($g['pending'] ?? 0) > 0);
-        })->merge($page->filter(fn ($r) => ! $r['gallery_url']))->pluck('order_no')->unique()->values()->all();
+        })->merge(collect($page->all())->filter(fn ($r) => ! $r['gallery_url']))->pluck('order_no')->unique()->values()->all();
         $byOrder = GalleryStatus::fetchByOrders($incomplete);
         $phones = Transaction::query()->with('customer:id,name,no_telp')
             ->whereIn('invoice', $page->pluck('kasir_reference')->filter()->unique()->all())
