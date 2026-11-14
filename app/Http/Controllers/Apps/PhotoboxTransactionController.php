@@ -48,6 +48,7 @@ class PhotoboxTransactionController extends Controller
             ->when($filters['test'] === 'hide', fn ($q) => $q->real())
             ->when($filters['search'], fn ($q, $s) => $q->where(fn ($w) => $w
                 ->where('order_no', 'like', "%{$s}%")
+                ->when(strlen($code = strtoupper(preg_replace('/[\s-]+/', '', $s))) >= 4, fn ($c) => $c->orWhere('gallery_url', 'like', "%/s/{$code}%"))
                 ->orWhere('voucher_code', 'like', "%{$s}%")
                 ->orWhere('template_name', 'like', "%{$s}%")))
             ->orderByRaw('COALESCE(paid_at, booth_created_at, created_at) DESC')
@@ -77,15 +78,29 @@ class PhotoboxTransactionController extends Controller
         // Status galeri (terupload / izin foto) + nomor WhatsApp pelanggan dari transaksi kasir
         $page = $transactions->getCollection();
         $gallery = GalleryStatus::fetch($page->map(fn ($r) => GalleryStatus::tokenFromUrl($r['gallery_url']))->filter()->all());
+        // Baris yang belum lengkap di kode link-nya sendiri: cari lewat nomor transaksi (mungkin sudah terunggah dengan kode link lain)
+        $incomplete = $page->filter(function ($r) use ($gallery) {
+            $g = ($t = GalleryStatus::tokenFromUrl($r['gallery_url'])) ? ($gallery[$t] ?? null) : null;
+
+            return ! $g || ! empty($g['expired']) ? false : (($g['files'] ?? 0) === 0 || ($g['pending'] ?? 0) > 0);
+        })->merge($page->filter(fn ($r) => ! $r['gallery_url']))->pluck('order_no')->unique()->values()->all();
+        $byOrder = GalleryStatus::fetchByOrders($incomplete);
         $phones = Transaction::query()->with('customer:id,name,no_telp')
             ->whereIn('invoice', $page->pluck('kasir_reference')->filter()->unique()->all())
             ->get()->keyBy('invoice');
-        $transactions->setCollection($page->map(function ($r) use ($gallery, $phones) {
+        $transactions->setCollection($page->map(function ($r) use ($gallery, $phones, $byOrder) {
             $tok = GalleryStatus::tokenFromUrl($r['gallery_url']);
             $g = $tok ? ($gallery[$tok] ?? null) : null;
             $cust = $r['kasir_reference'] ? ($phones[$r['kasir_reference']]->customer ?? null) : null;
-            $r['gallery_state'] = ! $r['gallery_url'] ? null : (! $g ? 'unknown' : (! empty($g['expired']) ? 'expired' : (($g['files'] ?? 0) > 0 ? 'uploaded' : 'pending')));
+            $r['gallery_state'] = GalleryStatus::state((bool) $r['gallery_url'], $g);
             $r['gallery_files'] = $g['files'] ?? 0;
+            $r['gallery_pending'] = $g['pending'] ?? 0;
+            // Kode link (token) untuk pelacakan: sama dengan yang tampil di website galeri
+            $r['link_code'] = $tok;
+            // Belum lengkap di kode link ini, tapi ada sesi galeri dengan NOMOR TRANSAKSI yang sama dan sudah berisi file
+            $r['gallery_alt'] = in_array($r['gallery_state'], [null, 'pending', 'partial'], true)
+                ? GalleryStatus::alternative($tok, $byOrder[$r['order_no']] ?? [])
+                : null;
             $r['social'] = $g['social'] ?? null;
             // Kontak yang diisi manual oleh CS (tersimpan di transaksi photobox) didahulukan; kalau kosong pakai data pelanggan kasir
             $meta = $r['meta'] ?? [];
@@ -135,16 +150,19 @@ class PhotoboxTransactionController extends Controller
     /** Cari pelanggan kasir (nama / nomor) untuk mengisi kontak WhatsApp. Hanya nama + nomor yang dikembalikan. */
     public function customerSearch(Request $request): \Illuminate\Http\JsonResponse
     {
+        // Tanpa kata kunci = pelanggan TERBARU di atas (seperti pemilih pelanggan di halaman transaksi); dengan kata kunci = cari nama / telepon / kode member.
         $q = trim((string) $request->query('q', ''));
-        if (mb_strlen($q) < 2) {
-            return response()->json([]);
+        $query = \App\Models\Customer::query()->orderByDesc('id')->limit(80);
+        if ($q !== '') {
+            $like = '%'.str_replace(['%', '_'], ['\\%', '\\_'], $q).'%';
+            $query->where(fn ($w) => $w->where('name', 'like', $like)->orWhere('no_telp', 'like', $like)->orWhere('member_code', 'like', $like));
         }
-        $like = '%'.str_replace(['%', '_'], ['\\%', '\\_'], $q).'%';
-        $rows = \App\Models\Customer::query()->select('id', 'name', 'no_telp')
-            ->where(fn ($w) => $w->where('name', 'like', $like)->orWhere('no_telp', 'like', $like))
-            ->orderBy('name')->limit(8)->get()
-            ->map(fn ($c) => ['id' => $c->id, 'name' => $c->name, 'wa' => GalleryStatus::waNumber($c->no_telp), 'no_telp' => $c->no_telp])
-            ->filter(fn ($c) => $c['wa'])->values();
+        $rows = $query->get()
+            ->map(fn ($c) => [
+                'id' => $c->id, 'name' => $c->name, 'wa' => GalleryStatus::waNumber($c->no_telp), 'no_telp' => $c->no_telp,
+                'member_code' => $c->member_code, 'is_loyalty_member' => (bool) $c->is_loyalty_member, 'loyalty_tier' => $c->loyalty_tier, 'loyalty_points' => $c->loyalty_points,
+            ])
+            ->filter(fn ($c) => $c['wa'])->take(30)->values();
 
         return response()->json($rows);
     }

@@ -3,9 +3,10 @@ import { Head, router, useForm } from "@inertiajs/react";
 import DashboardLayout from "@/Layouts/DashboardLayout";
 import Table from "@/Components/Dashboard/Table";
 import Pagination from "@/Components/Dashboard/Pagination";
+import AddCustomerModal from "@/Components/POS/AddCustomerModal";
 import Swal from "sweetalert2";
 import toast from "react-hot-toast";
-import { IconBrandWhatsapp, IconCamera, IconChevronDown, IconCopy, IconExternalLink, IconFlask, IconKey, IconPencil, IconPlus, IconSearch, IconTrash, IconX } from "@tabler/icons-react";
+import { IconBrandWhatsapp, IconCamera, IconCheck, IconChevronDown, IconCopy, IconExternalLink, IconFlask, IconKey, IconPencil, IconPlus, IconSearch, IconTrash, IconUser, IconUserPlus, IconX } from "@tabler/icons-react";
 
 const rupiah = (v = 0) =>
     new Intl.NumberFormat("id-ID", { style: "currency", currency: "IDR", minimumFractionDigits: 0 }).format(v);
@@ -40,9 +41,11 @@ const waLink = (t, c = null) => {
     const text = `${hai} Terima kasih sudah seru-seruan bareng Popsnap!\nIni soft file foto kamu, yuk langsung dilihat dan diunduh:\n${t.gallery_url}\n\nSemoga hasilnya bikin senyum-senyum sendiri. Kami tunggu kamu lagi di Popsnap, siap bergaya lebih seru!`;
     return `https://wa.me/${wa || ""}?text=${encodeURIComponent(text)}`;
 };
+const fmtCode = (c) => (/^[A-Z0-9]{10}$/.test(c || "") ? `${c.slice(0, 4)} ${c.slice(4, 8)} ${c.slice(8)}` : c);
 const GALLERY_BADGE = {
     uploaded: ["Terupload", "bg-emerald-100 text-emerald-700"],
     pending: ["Belum terupload", "bg-amber-100 text-amber-700"],
+    partial: ["Sebagian terupload", "bg-orange-100 text-orange-700"],
     expired: ["Kedaluwarsa", "bg-slate-200 text-slate-600"],
     unknown: ["Status tidak diketahui", "bg-slate-100 text-slate-500"],
 };
@@ -88,20 +91,24 @@ function WaContactModal({ t, onClose }) {
     const [wa, setWa] = useState(t.customer_wa ? `+${t.customer_wa}` : "");
     const [q, setQ] = useState("");
     const [found, setFound] = useState([]);
+    const [open, setOpen] = useState(false);
+    const [picked, setPicked] = useState(null);
+    const [adding, setAdding] = useState(false);
     const [err, setErr] = useState("");
     useEffect(() => {
-        if (q.trim().length < 2) { setFound([]); return; }
+        if (!open) return undefined;
         const ctl = new AbortController();
         const id = setTimeout(() => {
-            fetch(route("photobox-customers.search", { q: q.trim() }), { headers: { Accept: "application/json" }, signal: ctl.signal })
+            fetch(route("photobox-customers.search", q.trim() ? { q: q.trim() } : {}), { headers: { Accept: "application/json" }, signal: ctl.signal })
                 .then((r) => { if (!r.ok) throw new Error(`HTTP ${r.status}`); setErr(""); return r.json(); }).then(setFound)
                 .catch((e) => { if (e.name !== "AbortError") { setFound([]); setErr("Pencarian pelanggan gagal (" + e.message + "). Coba ketik ulang."); } });
         }, 250);
         return () => { clearTimeout(id); ctl.abort(); };
-    }, [q]);
+    }, [q, open]);
     const digits = wa.replace(/\D+/g, "");
     const valid = digits.length >= 9 && digits.length <= 15;
-    const norm = () => (digits.startsWith("62") ? digits : digits.startsWith("0") ? `62${digits.slice(1)}` : `62${digits}`);
+    const norm = (d = digits) => (d.startsWith("62") ? d : d.startsWith("0") ? `62${d.slice(1)}` : `62${d}`);
+    const pick = (c) => { setPicked(c); setName(c.name || ""); setWa(`+${c.wa}`); setQ(""); setOpen(false); setErr(""); };
     const send = (save) => {
         if (!valid) { setErr("Nomor WhatsApp belum benar."); return; }
         const c = { name: name.trim(), wa: norm() };
@@ -117,30 +124,65 @@ function WaContactModal({ t, onClose }) {
                     <h3 className="font-bold text-slate-900 dark:text-white">Kirim link via WhatsApp</h3>
                     <button type="button" onClick={onClose} className="text-slate-400 hover:text-slate-600"><IconX size={18} /></button>
                 </div>
-                <label className="block text-sm">
-                    <span className="mb-1 block text-slate-600 dark:text-slate-300">Cari pelanggan (nama / nomor)</span>
-                    <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Ketik minimal 2 huruf…" className={`${field} w-full`} />
-                </label>
-                {found.length > 0 && (
-                    <div className="mt-1 max-h-40 overflow-auto rounded-xl border border-slate-200 dark:border-slate-700">
-                        {found.map((c) => (
-                            <button key={c.id} type="button" onClick={() => { setName(c.name || ""); setWa(`+${c.wa}`); setQ(""); setFound([]); setErr(""); }} className="flex w-full items-center justify-between gap-3 px-3 py-2 text-left text-sm hover:bg-slate-50 dark:hover:bg-slate-800">
-                                <span className="font-medium text-slate-800 dark:text-slate-100">{c.name || "(tanpa nama)"}</span><span className="text-xs text-slate-500">+{c.wa}</span>
-                            </button>
-                        ))}
+                <div className="relative text-sm">
+                    <span className="mb-1 block text-slate-600 dark:text-slate-300">Pelanggan (opsional)</span>
+                    <div className="flex items-center gap-2">
+                        <button type="button" onClick={() => setOpen((o) => !o)} className={`flex h-12 flex-1 items-center gap-3 rounded-xl border-2 bg-white px-3 text-left dark:bg-slate-900 ${open ? "border-primary-500" : "border-slate-200 dark:border-slate-700"}`}>
+                            <span className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg bg-slate-100 dark:bg-slate-800"><IconUser size={18} className="text-slate-400" /></span>
+                            <span className="min-w-0 flex-1">
+                                {picked ? (<><span className="block truncate text-sm font-medium text-slate-800 dark:text-slate-200">{picked.name}</span><span className="block truncate text-xs text-slate-500">+{picked.wa}</span></>)
+                                    : <span className="text-sm text-slate-400">Pilih pelanggan…</span>}
+                            </span>
+                            <IconChevronDown size={18} className={`text-slate-400 transition-transform ${open ? "rotate-180" : ""}`} />
+                        </button>
+                        <button type="button" onClick={() => setAdding(true)} title="Tambah pelanggan baru" className="flex h-12 w-12 items-center justify-center rounded-xl border-2 border-dashed border-primary-300 text-primary-500 hover:bg-primary-50"><IconUserPlus size={20} /></button>
                     </div>
-                )}
+                    {open && (
+                        <div className="absolute left-0 right-0 top-full z-50 mt-2 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xl dark:border-slate-700 dark:bg-slate-900">
+                            <div className="border-b border-slate-100 p-3 dark:border-slate-800">
+                                <div className="relative">
+                                    <IconSearch size={18} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                                    <input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder="Cari nama/telepon/nomor anggota…" className="h-10 w-full rounded-lg border border-slate-200 bg-slate-50 pl-10 pr-3 text-sm text-slate-800 outline-none focus:border-primary-500 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200" />
+                                </div>
+                            </div>
+                            <div className="max-h-60 overflow-y-auto">
+                                {found.length > 0 ? found.map((c) => (
+                                    <button key={c.id} type="button" onClick={() => pick(c)} className={`flex w-full items-center gap-3 px-4 py-2.5 text-left hover:bg-slate-50 dark:hover:bg-slate-800 ${picked?.id === c.id ? "bg-primary-50 dark:bg-primary-950/30" : ""}`}>
+                                        <span className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full bg-slate-100 text-sm font-medium text-slate-500 dark:bg-slate-800">{picked?.id === c.id ? <IconCheck size={16} /> : String(c.name || "?").charAt(0).toUpperCase()}</span>
+                                        <span className="min-w-0 flex-1">
+                                            <span className="block truncate text-sm font-medium text-slate-800 dark:text-slate-200">{c.name || "(tanpa nama)"}</span>
+                                            <span className="block truncate text-xs text-slate-500">{c.no_telp || `+${c.wa}`}</span>
+                                            <span className="block truncate text-[11px] text-primary-500">{c.is_loyalty_member ? `${c.loyalty_tier} • ${c.loyalty_points || 0} poin` : "Non-member"}</span>
+                                        </span>
+                                    </button>
+                                )) : (
+                                    <div className="py-6 text-center text-slate-400">
+                                        <p className="text-sm">Pelanggan tidak ditemukan</p>
+                                        <button type="button" onClick={() => { setOpen(false); setAdding(true); }} className="mt-2 text-sm font-medium text-primary-500">+ Tambah pelanggan baru</button>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    )}
+                </div>
+                <AddCustomerModal isOpen={adding} onClose={() => setAdding(false)} showMemberRegistration={false}
+                    onSuccess={(c) => { setAdding(false); pick({ id: c.id, name: c.name, wa: norm(String(c.no_telp || "").replace(/\D+/g, "")) }); }} />
                 <div className="mt-3 grid grid-cols-2 gap-3">
                     <label className="block text-sm"><span className="mb-1 block text-slate-600 dark:text-slate-300">Nama</span><input value={name} onChange={(e) => setName(e.target.value)} placeholder="Nama tamu" className={`${field} w-full`} /></label>
                     <label className="block text-sm"><span className="mb-1 block text-slate-600 dark:text-slate-300">Nomor WhatsApp</span><input value={wa} onChange={(e) => { setWa(e.target.value); setErr(""); }} inputMode="tel" placeholder="08xxxxxxxxxx" className={`${field} w-full`} /></label>
                 </div>
                 {err && <p className="mt-2 text-xs text-rose-600">{err}</p>}
                 <p className="mt-2 text-xs text-slate-500">Boleh dikirim walau tamu tidak memberi izin foto untuk sosmed / mading. Nomor 08… otomatis jadi +62.</p>
+                <ul className="mt-2 space-y-0.5 text-xs text-slate-500">
+                    <li><b>Pilih kontak di WhatsApp</b>: buka WhatsApp tanpa nomor, penerima dipilih sendiri di aplikasinya.</li>
+                    <li><b>Kirim saja</b>: kirim ke nomor di atas, tidak disimpan.</li>
+                    <li><b>Simpan &amp; kirim</b>: kirim dan simpan nama + nomor di transaksi ini.</li>
+                </ul>
                 <div className="mt-4 flex flex-wrap justify-end gap-2">
                     {t.customer_manual && <button type="button" onClick={clear} className="mr-auto rounded-xl px-3 py-2 text-xs text-rose-600 hover:bg-rose-50">Hapus kontak manual</button>}
-                    <button type="button" onClick={() => { window.open(waLink(t, { name: "", wa: "" }), "_blank", "noopener,noreferrer"); onClose(); }} className="rounded-xl border border-slate-200 px-3 py-2 text-xs font-medium text-slate-600 dark:border-slate-700 dark:text-slate-300">Pilih kontak di WhatsApp</button>
-                    <button type="button" onClick={() => send(false)} className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700">Kirim saja</button>
-                    <button type="button" onClick={() => send(true)} className="rounded-xl bg-emerald-600 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-700">Simpan &amp; kirim</button>
+                    <button type="button" onClick={() => { window.open(waLink(t, { name: "", wa: "" }), "_blank", "noopener,noreferrer"); onClose(); }} title="Buka WhatsApp tanpa nomor: pilih sendiri penerimanya di dalam aplikasi WhatsApp. Pesan + link sudah terisi." className="rounded-xl border border-slate-200 px-3 py-2 text-xs font-medium text-slate-600 dark:border-slate-700 dark:text-slate-300">Pilih kontak di WhatsApp</button>
+                    <button type="button" onClick={() => send(false)} title="Kirim ke nomor di atas, tanpa menyimpan nomornya di transaksi ini." className="rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-700">Kirim saja</button>
+                    <button type="button" onClick={() => send(true)} title="Kirim ke nomor di atas, dan simpan nama + nomor itu di transaksi ini supaya lain kali tinggal klik." className="rounded-xl bg-emerald-600 px-3 py-2 text-xs font-semibold text-white hover:bg-emerald-700">Simpan &amp; kirim</button>
                 </div>
             </div>
         </div>
@@ -156,7 +198,7 @@ export default function Index({ filters, range, transactions, summary, studios, 
     const showActions = canEdit || canDelete;
     const [searchText, setSearchText] = useState(filters.search || "");
     // Ada yang "belum terupload": cek ulang tiap 30 detik supaya statusnya berubah sendiri begitu CS selesai unggah manual
-    const hasPending = !!galleryStatusOn && transactions.data.some((t) => t.gallery_state === "pending");
+    const hasPending = !!galleryStatusOn && transactions.data.some((t) => t.gallery_state === "pending" || t.gallery_state === "partial");
     useEffect(() => {
         if (!hasPending) return undefined;
         const id = setInterval(() => { if (!document.hidden) router.reload({ only: ["transactions"], preserveScroll: true, preserveState: true }); }, 30000);
@@ -383,7 +425,7 @@ export default function Index({ filters, range, transactions, summary, studios, 
                         <span className="mb-1 block text-xs font-medium text-slate-500 dark:text-slate-400">Cari</span>
                         <div className="relative">
                             <IconSearch size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                            <input value={searchText} onChange={(e) => setSearchText(e.target.value)} placeholder="Nomor / voucher / template"
+                            <input value={searchText} onChange={(e) => setSearchText(e.target.value)} placeholder="Nomor transaksi / kode link / voucher / template"
                                 className={`${field} w-full pl-9 ${searchText ? "pr-16" : "pr-3"}`} />
                             {searchText && (
                                 <button type="button" aria-label="Hapus pencarian" onClick={() => { setSearchText(""); if (filters.search) go({ search: "" }); }}
@@ -464,8 +506,10 @@ export default function Index({ filters, range, transactions, summary, studios, 
                                     {t.gallery_url ? (
                                         <div className="flex flex-col gap-1.5">
                                             {galleryStatusOn && t.gallery_state && GALLERY_BADGE[t.gallery_state] && (
-                                                <span className={`w-fit rounded-full px-2.5 py-1 text-xs font-semibold ${GALLERY_BADGE[t.gallery_state][1]}`}>{GALLERY_BADGE[t.gallery_state][0]}{t.gallery_state === "uploaded" ? ` · ${t.gallery_files} file` : ""}</span>
+                                                <span className={`w-fit rounded-full px-2.5 py-1 text-xs font-semibold ${GALLERY_BADGE[t.gallery_state][1]}`}>{GALLERY_BADGE[t.gallery_state][0]}{t.gallery_state === "uploaded" ? ` · ${t.gallery_files} file` : ""}{t.gallery_state === "partial" ? ` · ${t.gallery_files} file, ${t.gallery_pending} menunggu` : ""}</span>
                                             )}
+                                            {t.link_code && <button type="button" onClick={() => copyText(t.link_code)} title="Salin kode link" className="w-fit font-mono text-[11px] text-slate-500 hover:text-slate-800">{fmtCode(t.link_code)}</button>}
+                                            {t.gallery_alt && <a href={t.gallery_alt.url} target="_blank" rel="noopener noreferrer" title="Foto transaksi ini sudah ada di galeri dengan kode link lain (mis. unggah manual lama). Buka untuk memeriksa." className="w-fit rounded-md bg-sky-50 px-2 py-1 text-[11px] font-semibold text-sky-700 hover:bg-sky-100">Ada di kode lain: <span className="font-mono">{fmtCode(t.gallery_alt.code)}</span> · {t.gallery_alt.files} file</a>}
                                             <div className="flex gap-1.5">
                                                 <a href={t.gallery_url} target="_blank" rel="noopener noreferrer" title="Buka galeri" className="rounded-lg border border-sky-200 bg-sky-100 p-2 text-sky-600 hover:bg-sky-200 dark:border-sky-800 dark:bg-sky-900/40 dark:text-sky-400"><IconExternalLink size={16} /></a>
                                                 <button type="button" onClick={() => copyText(t.gallery_url)} title="Salin link" className="rounded-lg border border-slate-200 bg-slate-100 p-2 text-slate-600 hover:bg-slate-200 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300"><IconCopy size={16} /></button>
@@ -475,7 +519,7 @@ export default function Index({ filters, range, transactions, summary, studios, 
                                 </Table.Td>
                                 <Table.Td>
                                     {(() => {
-                                        const ready = !!t.gallery_url && (!galleryStatusOn || t.gallery_state === "uploaded" || t.gallery_state === "unknown");
+                                        const ready = !!t.gallery_url && (!galleryStatusOn || t.gallery_state === "uploaded" || t.gallery_state === "partial" || t.gallery_state === "unknown");
                                         const base = "inline-flex items-center gap-1.5 whitespace-nowrap rounded-lg border px-3 py-2 text-xs font-semibold";
                                         if (!ready) {
                                             const why = !t.gallery_url ? "Link belum ada" : t.gallery_state === "expired" ? "Link kedaluwarsa" : "Foto belum terupload";
