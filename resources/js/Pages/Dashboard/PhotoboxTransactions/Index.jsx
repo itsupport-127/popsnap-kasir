@@ -38,7 +38,9 @@ const waLink = (t, c = null) => {
     const name = c ? c.name : t.customer_name, wa = c ? c.wa : t.customer_wa;
     const hai = name ? `Hii ${name}!` : "Hii kak!";
     // Tanpa emoji / stiker: karakter emoji sering rusak ("?") di tautan wa.me pada sebagian perangkat
-    const text = `${hai} Terima kasih sudah seru-seruan bareng Popsnap!\nIni soft file foto kamu, yuk langsung dilihat dan diunduh:\n${t.gallery_url}\n\nSemoga hasilnya bikin senyum-senyum sendiri. Kami tunggu kamu lagi di Popsnap, siap bergaya lebih seru!`;
+    const until = t.gallery_expires_at ? new Intl.DateTimeFormat("id-ID", { dateStyle: "long", timeStyle: "short", timeZone: "Asia/Jakarta" }).format(new Date(t.gallery_expires_at)) : null;
+    const note = until ? `\n\nLink ini aktif sampai ${until} WIB, jadi jangan lupa diunduh sebelum itu ya.` : "";
+    const text = `${hai} Terima kasih sudah seru-seruan bareng Popsnap!\nIni soft file foto kamu, yuk langsung dilihat dan diunduh:\n${t.gallery_url}${note}\n\nSemoga hasilnya bikin senyum-senyum sendiri. Kami tunggu kamu lagi di Popsnap, siap bergaya lebih seru!`;
     return `https://wa.me/${wa || ""}?text=${encodeURIComponent(text)}`;
 };
 const fmtCode = (c) => (/^[A-Z0-9]{10}$/.test(c || "") ? `${c.slice(0, 4)} ${c.slice(4, 8)} ${c.slice(8)}` : c);

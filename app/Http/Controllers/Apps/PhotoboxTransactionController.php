@@ -95,6 +95,8 @@ class PhotoboxTransactionController extends Controller
             $r['gallery_state'] = GalleryStatus::state((bool) $r['gallery_url'], $g);
             $r['gallery_files'] = $g['files'] ?? 0;
             $r['gallery_pending'] = $g['pending'] ?? 0;
+            // Batas waktu link (epoch ms dari galeri) -> ISO, dipakai sapaan WhatsApp. Kosong kalau galeri belum diperbarui / link sudah kedaluwarsa.
+            $r['gallery_expires_at'] = (! empty($g['expiresAt']) && empty($g['expired'])) ? \Carbon\Carbon::createFromTimestampMs((int) $g['expiresAt'])->toIso8601String() : null;
             // Kode link (token) untuk pelacakan: sama dengan yang tampil di website galeri
             $r['link_code'] = $tok;
             // Belum lengkap di kode link ini, tapi ada sesi galeri dengan NOMOR TRANSAKSI yang sama dan sudah berisi file
