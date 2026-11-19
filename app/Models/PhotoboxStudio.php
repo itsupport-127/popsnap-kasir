@@ -7,6 +7,13 @@ use Illuminate\Support\Str;
 
 class PhotoboxStudio extends Model
 {
+    protected static function booted(): void
+    {
+        // Status booth (online/laporan/ganti nama/aktif). Ping booth sering -> dibatasi 10 dtk per studio.
+        static::saved(fn (self $m) => \App\Events\PhotoboxUpdated::fire('studio', (int) $m->id, 10));
+        static::deleted(fn (self $m) => \App\Events\PhotoboxUpdated::fire('studio', (int) $m->id));
+    }
+
     protected $fillable = ['name', 'token_hash', 'token_hint', 'is_active', 'last_seen_at', 'sync_report', 'report_at'];
 
     protected $casts = ['is_active' => 'boolean', 'last_seen_at' => 'datetime', 'sync_report' => 'array', 'report_at' => 'datetime'];

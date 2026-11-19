@@ -13,6 +13,7 @@ class NotificationController extends Controller
      */
     public function markLowStockRead(Request $request)
     {
+        \Illuminate\Support\Facades\Cache::forget('shared.heavy.u'.$request->user()->id); // notifikasi di header langsung ikut berubah
         $request->validate([
             'product_id' => ['required', 'exists:products,id'],
         ]);
@@ -33,6 +34,7 @@ class NotificationController extends Controller
      */
     public function markAllLowStockRead(Request $request)
     {
+        \Illuminate\Support\Facades\Cache::forget('shared.heavy.u'.$request->user()->id); // notifikasi di header langsung ikut berubah
         $productIds = Product::where('stock', '<=', 0)->pluck('id')->all();
 
         if (count($productIds) === 0) {

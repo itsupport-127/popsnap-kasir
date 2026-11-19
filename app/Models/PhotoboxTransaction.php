@@ -7,6 +7,14 @@ use Illuminate\Database\Eloquent\SoftDeletes;
 
 class PhotoboxTransaction extends Model
 {
+    protected static function booted(): void
+    {
+        // Transaksi dibuat / diubah / dihapus (dari booth, dari kasir, atau tarik galeri) -> dashboard yang terbuka ikut update.
+        $fire = fn (self $m) => \App\Events\PhotoboxUpdated::fire('tx', $m->studio_id ? (int) $m->studio_id : null);
+        static::saved($fire);
+        static::deleted($fire);
+    }
+
     use SoftDeletes;
 
     protected $fillable = [

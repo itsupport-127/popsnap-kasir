@@ -9,6 +9,14 @@ class Setting extends Model
 {
     use HasFactory;
 
+    protected static function booted(): void
+    {
+        // Profil toko di-cache (HandleInertiaRequests); buang cache begitu pengaturan berubah supaya langsung terlihat
+        $forget = fn () => \Illuminate\Support\Facades\Cache::forget(\App\Http\Middleware\HandleInertiaRequests::STORE_KEY);
+        static::saved($forget);
+        static::deleted($forget);
+    }
+
     protected $fillable = [
         'key',
         'value',

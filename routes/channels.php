@@ -16,3 +16,8 @@ use Illuminate\Support\Facades\Broadcast;
 Broadcast::channel('print-jobs', function ($user) {
     return $user !== null;
 });
+
+// Update live halaman Transaksi Photobox (hanya user yang sudah login).
+Broadcast::channel('photobox', function ($user) {
+    return $user !== null;
+});

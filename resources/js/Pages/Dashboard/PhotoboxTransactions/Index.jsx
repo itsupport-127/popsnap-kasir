@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { Head, router, useForm } from "@inertiajs/react";
 import DashboardLayout from "@/Layouts/DashboardLayout";
+import useLiveRefresh from "@/Hooks/useLiveRefresh";
 import Table from "@/Components/Dashboard/Table";
 import Pagination from "@/Components/Dashboard/Pagination";
 import AddCustomerModal from "@/Components/POS/AddCustomerModal";
@@ -199,13 +200,9 @@ export default function Index({ filters, range, transactions, summary, studios, 
     const editForm = useForm({ template_name: "", method: "qris", amount: 0, status: "paid", paid_at: "" });
     const showActions = canEdit || canDelete;
     const [searchText, setSearchText] = useState(filters.search || "");
-    // Ada yang "belum terupload": cek ulang tiap 30 detik supaya statusnya berubah sendiri begitu CS selesai unggah manual
-    const hasPending = !!galleryStatusOn && transactions.data.some((t) => t.gallery_state === "pending" || t.gallery_state === "partial");
-    useEffect(() => {
-        if (!hasPending) return undefined;
-        const id = setInterval(() => { if (!document.hidden) router.reload({ only: ["transactions"], preserveScroll: true, preserveState: true }); }, 30000);
-        return () => clearInterval(id);
-    }, [hasPending]);
+    // LIVE (push via websocket/Reverb): begitu ada transaksi masuk / status booth berubah, server mengirim sinyal dan data di sini
+    // diperbarui sendiri tanpa polling & tanpa reload halaman. Ditahan sementara saat dialog / edit terbuka supaya isian tidak hilang.
+    const { status: liveStatus, enabled: liveOn, setEnabled: setLiveOn, lastAt } = useLiveRefresh({ only: ["transactions", "summary", "studios", "testCount"], pause: !!editing || !!waFor || form.processing || editForm.processing });
     useEffect(() => { setSearchText(filters.search || ""); }, [filters.search]); // ikut berubah kalau halaman dibuka dengan pencarian dari link lain
     const hasFilters = !!(filters.studio_id || filters.method || filters.status || filters.search || filters.test);
     const resetFilters = () => { setSearchText(""); go({ studio_id: "", method: "", status: "", search: "", test: "" }); };
@@ -323,9 +320,17 @@ export default function Index({ filters, range, transactions, summary, studios, 
                         Riwayat transaksi dari app Photobox tiap studio. Nomor transaksinya sama persis dengan di app Photobox.
                     </p>
                 </div>
+                <div className="flex flex-wrap items-center gap-2">
+                <button type="button" onClick={() => setLiveOn((v) => !v)}
+                    title={liveStatus === "on" ? "Tersambung realtime. Klik untuk mematikan." : liveStatus === "off" ? "Realtime (Reverb) belum aktif di server. Muat ulang halaman manual." : liveStatus === "connecting" ? "Menyambung ke server realtime..." : "Realtime dimatikan. Klik untuk menyalakan."}
+                    className={`inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-xs font-semibold ${liveStatus === "on" ? "border-emerald-300 bg-emerald-50 text-emerald-700" : liveStatus === "connecting" ? "border-amber-300 bg-amber-50 text-amber-700" : "border-slate-200 text-slate-500"}`}>
+                    <span className={`h-2 w-2 rounded-full ${liveStatus === "on" ? "animate-pulse bg-emerald-500" : liveStatus === "connecting" ? "animate-pulse bg-amber-500" : "bg-slate-400"}`} />
+                    {liveStatus === "on" ? `Live · ${new Intl.DateTimeFormat("id-ID", { timeStyle: "medium", timeZone: "Asia/Jakarta" }).format(lastAt)}` : liveStatus === "connecting" ? "Menyambung…" : liveStatus === "off" ? "Realtime belum aktif" : "Live mati"}
+                </button>
                 <button type="button" onClick={() => setShowStudios((v) => !v)} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-200 dark:hover:bg-slate-800">
                     <IconKey size={16} /> Studio & token
                 </button>
+                </div>
             </div>
 
             {showStudios && (
