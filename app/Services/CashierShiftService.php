@@ -219,7 +219,7 @@ class CashierShiftService
     }
 
     /**
-     * Rekap sesi photobox per template/paket selama shift (untuk email & halaman shift).
+     * Rekap sesi photobox per studio selama shift (untuk email & halaman shift).
      * "sessions" termasuk sesi voucher bernilai 0 (pendapatannya sudah tercatat di transaksi kasir saat voucher dibeli).
      *
      * @return array{sessions: int, transactions: int, revenue: int, items: array<int, array{name: string, qty: int, revenue: int}>}
@@ -230,9 +230,11 @@ class CashierShiftService
             return ['sessions' => 0, 'transactions' => 0, 'revenue' => 0, 'items' => []];
         }
 
+        // Dikelompokkan per STUDIO (bukan per paket), apa pun sumber transaksinya (app photobox atau diinput/diedit manual di kasir).
         $items = $this->ownedPhotoboxQuery($shift)
-            ->select(DB::raw("COALESCE(template_name, 'Tanpa nama') as name"), DB::raw('COUNT(*) as qty'), DB::raw('SUM(amount) as revenue'))
-            ->groupBy('name')
+            ->leftJoin('photobox_studios', 'photobox_studios.id', '=', 'photobox_transactions.studio_id')
+            ->select(DB::raw("COALESCE(photobox_studios.name, 'Tanpa studio') as name"), DB::raw('COUNT(*) as qty'), DB::raw('SUM(photobox_transactions.amount) as revenue'))
+            ->groupBy('photobox_studios.name')
             ->orderByDesc('qty')
             ->get()
             ->map(fn ($r) => ['name' => $r->name, 'qty' => (int) $r->qty, 'revenue' => (int) $r->revenue])

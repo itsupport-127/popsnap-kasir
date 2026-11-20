@@ -102,7 +102,7 @@
                                 @else
                                     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="font-size:14px;border:1px solid #e2e8f0;border-radius:10px;">
                                         <tr>
-                                            <td style="padding:6px 12px;font-size:11px;color:#94a3b8;text-transform:uppercase;letter-spacing:.05em;">Paket</td>
+                                            <td style="padding:6px 12px;font-size:11px;color:#94a3b8;text-transform:uppercase;letter-spacing:.05em;">Studio</td>
                                             <td style="padding:6px 8px;font-size:11px;color:#94a3b8;text-transform:uppercase;letter-spacing:.05em;text-align:right;">Sesi</td>
                                             <td style="padding:6px 12px;font-size:11px;color:#94a3b8;text-transform:uppercase;letter-spacing:.05em;text-align:right;">Nominal</td>
                                         </tr>

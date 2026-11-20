@@ -276,7 +276,7 @@ class CashierShiftTest extends TestCase
         $html = (new CashierShiftClosingReportMail($shift->fresh()))->render();
         $this->assertStringContainsString('Photobox', $html);
         $this->assertStringContainsString('Rp 75.000', $html);
-        $this->assertStringContainsString('Emma Room', $html);
+        $this->assertStringContainsString('Studio Emma', $html);
     }
 
     public function test_photobox_sales_are_counted_in_only_one_of_overlapping_shifts(): void
@@ -331,6 +331,32 @@ class CashierShiftTest extends TestCase
         $service = app(\App\Services\CashierShiftService::class);
         $this->assertSame(35000, $service->calculatePhotoboxTotals($shift)['photobox_sales_total']);
         $this->assertSame(1, $service->calculatePhotoboxRecap($shift)['sessions']);
+    }
+
+    public function test_photobox_recap_is_grouped_per_studio(): void
+    {
+        $cashier = $this->createUserWithPermissions(['cashier-shifts-access']);
+        $shift = CashierShift::create([
+            'user_id' => $cashier->id, 'opened_by' => $cashier->id, 'opened_at' => now()->subHours(10), 'closed_at' => now()->subHour(),
+            'opening_cash' => 0, 'expected_cash' => 0, 'status' => 'closed',
+        ]);
+        $emma = new PhotoboxStudio(['name' => 'Studio Emma', 'is_active' => true, 'token_hash' => bin2hex(random_bytes(32))]);
+        $emma->save();
+        $jason = new PhotoboxStudio(['name' => 'Studio Jason', 'is_active' => true, 'token_hash' => bin2hex(random_bytes(32))]);
+        $jason->save();
+        $n = 0;
+        foreach ([[$emma, 'Paket A', 35000], [$emma, 'Paket B', 35000], [$jason, 'Paket A', 35000]] as [$st, $tpl, $amt]) {
+            PhotoboxTransaction::create([
+                'order_no' => 'PB-G-'.(++$n), 'studio_id' => $st->id, 'template_name' => $tpl, 'mode' => 'photo',
+                'method' => 'qris', 'amount' => $amt, 'status' => 'paid', 'paid_at' => now()->subHours(5),
+            ]);
+        }
+
+        $recap = app(\App\Services\CashierShiftService::class)->calculatePhotoboxRecap($shift);
+        $this->assertSame(['Studio Emma', 'Studio Jason'], array_column($recap['items'], 'name'));
+        $this->assertSame([2, 1], array_column($recap['items'], 'qty'));
+        $this->assertSame([70000, 35000], array_column($recap['items'], 'revenue'));
+        $this->assertSame(105000, $recap['revenue']);
     }
 
     public function test_admin_with_force_close_permission_can_close_other_cashier_shift(): void

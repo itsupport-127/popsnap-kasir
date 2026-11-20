@@ -168,7 +168,7 @@ function PhotoboxRecapTable({ recap }) {
             <table className="w-full text-sm">
                 <thead>
                     <tr className="text-[11px] uppercase tracking-wide text-slate-400">
-                        <th className="px-3 py-2 text-left font-medium">Paket</th>
+                        <th className="px-3 py-2 text-left font-medium">Studio</th>
                         <th className="px-3 py-2 text-right font-medium">Sesi</th>
                         <th className="px-3 py-2 text-right font-medium">Nominal</th>
                     </tr>
