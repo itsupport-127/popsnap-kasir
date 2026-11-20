@@ -306,6 +306,33 @@ class CashierShiftTest extends TestCase
         $this->assertSame(0, $service->calculatePhotoboxRecap($shiftB)['sessions']);
     }
 
+    public function test_forgotten_open_shift_from_months_ago_does_not_swallow_photobox_sales(): void
+    {
+        $old = $this->createUserWithPermissions(['cashier-shifts-access']);
+        $cashier = $this->createUserWithPermissions(['cashier-shifts-access']);
+
+        // shift lama yang lupa ditutup (masih "open" berbulan-bulan)
+        CashierShift::create([
+            'user_id' => $old->id, 'opened_by' => $old->id, 'opened_at' => now()->subMonths(4),
+            'opening_cash' => 0, 'expected_cash' => 0, 'status' => CashierShift::STATUS_OPEN,
+        ]);
+        $shift = CashierShift::create([
+            'user_id' => $cashier->id, 'opened_by' => $cashier->id, 'opened_at' => now()->subHours(10), 'closed_at' => now()->subHour(),
+            'opening_cash' => 0, 'expected_cash' => 0, 'status' => 'closed',
+        ]);
+
+        $studio = new PhotoboxStudio(['name' => 'Studio Emma', 'is_active' => true, 'token_hash' => bin2hex(random_bytes(32))]);
+        $studio->save();
+        PhotoboxTransaction::create([
+            'order_no' => 'PB-O-0100', 'studio_id' => $studio->id, 'template_name' => 'Emma Room', 'mode' => 'photo',
+            'method' => 'qris', 'amount' => 35000, 'status' => 'paid', 'paid_at' => now()->subHours(5),
+        ]);
+
+        $service = app(\App\Services\CashierShiftService::class);
+        $this->assertSame(35000, $service->calculatePhotoboxTotals($shift)['photobox_sales_total']);
+        $this->assertSame(1, $service->calculatePhotoboxRecap($shift)['sessions']);
+    }
+
     public function test_admin_with_force_close_permission_can_close_other_cashier_shift(): void
     {
         $cashier = $this->createUserWithPermissions([

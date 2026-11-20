@@ -141,8 +141,16 @@ class CashierShiftService
      */
     private function shiftWindow(CashierShift $shift): array
     {
-        return [$shift->opened_at, $shift->closed_at ?? now()];
+        $end = $shift->closed_at ?? now();
+        // Shift tidak mungkin berlangsung berhari-hari. Shift yang lupa ditutup (berbulan-bulan "open") tidak boleh
+        // menelan transaksi photobox semua shift sesudahnya, jadi jendelanya dibatasi.
+        $cap = $shift->opened_at->copy()->addHours(self::MAX_SHIFT_HOURS);
+
+        return [$shift->opened_at, $end->greaterThan($cap) ? $cap : $end];
     }
+
+    /** Batas wajar durasi satu shift untuk mengaitkan transaksi photobox (jam). */
+    public const MAX_SHIFT_HOURS = 48;
 
     /**
      * Transaksi photobox yang LUNAS, asli (bukan TEST), dan milik shift ini.
@@ -157,10 +165,12 @@ class CashierShiftService
             ->real()
             ->where('status', 'paid')
             ->whereBetween('paid_at', [$start, $end])
-            ->whereNotExists(function ($q) use ($shift) {
+            ->whereNotExists(function ($q) use ($shift, $start) {
                 $q->select(DB::raw(1))->from('cashier_shifts as other')
                     ->where('other.id', '!=', $shift->id)
                     ->whereColumn('other.opened_at', '<=', 'photobox_transactions.paid_at')
+                    // shift lain hanya "mengklaim" transaksi dalam batas durasi wajar sejak dibuka (shift lupa-tutup tidak ikut)
+                    ->where('other.opened_at', '>=', $start->copy()->subHours(self::MAX_SHIFT_HOURS))
                     ->where(fn ($w) => $w->whereNull('other.closed_at')->orWhereColumn('other.closed_at', '>=', 'photobox_transactions.paid_at'))
                     ->where(fn ($w) => $w->where('other.opened_at', '<', $shift->opened_at)
                         ->orWhere(fn ($x) => $x->where('other.opened_at', $shift->opened_at)->where('other.id', '<', $shift->id)));
