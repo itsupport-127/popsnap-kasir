@@ -277,6 +277,8 @@ class CashierShiftTest extends TestCase
         $this->assertStringContainsString('Photobox', $html);
         $this->assertStringContainsString('Rp 75.000', $html);
         $this->assertStringContainsString('Studio Emma', $html);
+        $this->assertStringContainsString('QRIS Toko', $html);
+        $this->assertStringContainsString('QRIS Photobox', $html);
     }
 
     public function test_photobox_sales_are_counted_in_only_one_of_overlapping_shifts(): void
@@ -357,6 +359,31 @@ class CashierShiftTest extends TestCase
         $this->assertSame([2, 1], array_column($recap['items'], 'qty'));
         $this->assertSame([70000, 35000], array_column($recap['items'], 'revenue'));
         $this->assertSame(105000, $recap['revenue']);
+    }
+
+    public function test_photobox_recap_separates_add_print_under_its_studio(): void
+    {
+        $cashier = $this->createUserWithPermissions(['cashier-shifts-access']);
+        $shift = CashierShift::create([
+            'user_id' => $cashier->id, 'opened_by' => $cashier->id, 'opened_at' => now()->subHours(10), 'closed_at' => now()->subHour(),
+            'opening_cash' => 0, 'expected_cash' => 0, 'status' => 'closed',
+        ]);
+        $emma = new PhotoboxStudio(['name' => 'Studio Emma', 'is_active' => true, 'token_hash' => bin2hex(random_bytes(32))]);
+        $emma->save();
+        $n = 0;
+        foreach ([['photo', 35000], ['photo', 35000], ['addprint', 10000]] as [$mode, $amt]) {
+            PhotoboxTransaction::create([
+                'order_no' => 'PB-AP-'.(++$n), 'studio_id' => $emma->id, 'template_name' => 'X', 'mode' => $mode,
+                'method' => 'qris', 'amount' => $amt, 'status' => 'paid', 'paid_at' => now()->subHours(5),
+            ]);
+        }
+
+        $recap = app(\App\Services\CashierShiftService::class)->calculatePhotoboxRecap($shift);
+        $this->assertSame(['Studio Emma', 'Add Print (app)'], array_column($recap['items'], 'name'));
+        $this->assertSame([2, 1], array_column($recap['items'], 'qty'));
+        $this->assertSame([70000, 10000], array_column($recap['items'], 'revenue'));
+        $this->assertSame(2, $recap['sessions']);   // add print bukan sesi foto
+        $this->assertSame(80000, $recap['revenue']); // tapi nominalnya ikut total
     }
 
     public function test_admin_with_force_close_permission_can_close_other_cashier_shift(): void

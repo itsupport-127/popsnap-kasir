@@ -26,11 +26,11 @@
                                     <td style="padding:6px 0;text-align:right;font-weight:600;">{{ $rp($summary['cash']) }}</td>
                                 </tr>
                                 <tr>
-                                    <td style="padding:6px 0;color:#64748b;">Qris</td>
+                                    <td style="padding:6px 0;color:#64748b;">QRIS Toko <span style="font-size:12px;color:#94a3b8;">(kasir)</span></td>
                                     <td style="padding:6px 0;text-align:right;font-weight:600;">{{ $rp($summary['qris']) }}</td>
                                 </tr>
                                 <tr>
-                                    <td style="padding:6px 0;color:#64748b;">Photobox <span style="font-size:12px;color:#94a3b8;">({{ (int) ($summary['photobox_count'] ?? 0) }} transaksi)</span></td>
+                                    <td style="padding:6px 0;color:#64748b;">QRIS Photobox <span style="font-size:12px;color:#94a3b8;">({{ (int) ($summary['photobox_count'] ?? 0) }} transaksi)</span></td>
                                     <td style="padding:6px 0;text-align:right;font-weight:600;">{{ $rp($summary['photobox'] ?? 0) }}</td>
                                 </tr>
                                 <tr>
@@ -107,10 +107,11 @@
                                             <td style="padding:6px 12px;font-size:11px;color:#94a3b8;text-transform:uppercase;letter-spacing:.05em;text-align:right;">Nominal</td>
                                         </tr>
                                         @foreach ($pbRecap['items'] as $pbItem)
+                                            @php $pbSub = (bool) ($pbItem['sub'] ?? false); @endphp
                                             <tr>
-                                                <td style="padding:6px 12px;color:#334155;border-top:1px solid #f1f5f9;">{{ $pbItem['name'] }}</td>
-                                                <td style="padding:6px 8px;text-align:right;font-weight:600;color:#0f172a;border-top:1px solid #f1f5f9;white-space:nowrap;">{{ $pbItem['qty'] }}</td>
-                                                <td style="padding:6px 12px;text-align:right;color:#475569;border-top:1px solid #f1f5f9;white-space:nowrap;">{{ $rp($pbItem['revenue']) }}</td>
+                                                <td style="padding:{{ $pbSub ? '3px 12px 3px 28px' : '6px 12px' }};color:{{ $pbSub ? '#b45309' : '#334155' }};font-size:{{ $pbSub ? '12px' : '14px' }};border-top:1px solid #f1f5f9;">{{ $pbSub ? '↳ ' : '' }}{{ $pbItem['name'] }}</td>
+                                                <td style="padding:{{ $pbSub ? '3px 8px' : '6px 8px' }};text-align:right;font-weight:{{ $pbSub ? '400' : '600' }};color:{{ $pbSub ? '#b45309' : '#0f172a' }};font-size:{{ $pbSub ? '12px' : '14px' }};border-top:1px solid #f1f5f9;white-space:nowrap;">{{ $pbItem['qty'] }}</td>
+                                                <td style="padding:{{ $pbSub ? '3px 12px' : '6px 12px' }};text-align:right;color:{{ $pbSub ? '#b45309' : '#475569' }};font-size:{{ $pbSub ? '12px' : '14px' }};border-top:1px solid #f1f5f9;white-space:nowrap;">{{ $rp($pbItem['revenue']) }}</td>
                                             </tr>
                                         @endforeach
                                         <tr>

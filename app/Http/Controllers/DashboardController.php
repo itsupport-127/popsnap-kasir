@@ -205,7 +205,7 @@ class DashboardController extends Controller
         // ── Rincian per sumber: kasir toko + tiap studio photobox (detail di menu masing-masing) ──
         // Kasir langsung & booth selalu tampil (walau Rp 0), booth dirinci per studio. Studio aktif tetap tampil walau belum ada transaksi.
         $sources = collect([[
-            'key' => 'store', 'name' => 'Kasir Langsung (Toko)', 'type' => 'store',
+            'key' => 'store', 'name' => 'Toko (kasir)', 'type' => 'store',
             'transactions' => $storeTransactions, 'sessions' => null, 'revenue' => $storeSales,
         ]]);
         if ($photobox) {
@@ -219,7 +219,7 @@ class DashboardController extends Controller
                 ])
                 ->sortByDesc('revenue')->values();
             $sources->push([
-                'key' => 'photobox', 'name' => 'Booth Photobox', 'type' => 'photobox',
+                'key' => 'photobox', 'name' => 'Photobox (app booth)', 'type' => 'photobox',
                 'transactions' => (int) $photobox['transactions'], 'sessions' => (int) $photobox['sessions'],
                 'revenue' => (int) $photobox['revenue'], 'children' => $studios,
             ]);

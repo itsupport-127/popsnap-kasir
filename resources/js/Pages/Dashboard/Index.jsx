@@ -459,7 +459,7 @@ export default function Dashboard({
                                 title={`Penjualan ${periodLabel}`}
                                 value={formatCurrency(todaySales)}
                                 subtitle={photobox
-                                    ? `Kasir ${formatCurrency(storeSales)} · Booth ${formatCurrency(photobox.revenue)}`
+                                    ? `Toko (kasir) ${formatCurrency(storeSales)} · Photobox (app) ${formatCurrency(photobox.revenue)}`
                                     : `Total penjualan ${periodLabel.toLowerCase()}`}
                                 icon={IconCoin}
                                 gradient="from-primary-500 to-primary-700"
@@ -488,7 +488,7 @@ export default function Dashboard({
                             title={`Transaksi ${periodLabel}`}
                             value={todayTransactions}
                             subtitle={photobox
-                                ? `Kasir ${storeTransactions} · Booth ${photobox.transactions} (QRIS booth)`
+                                ? `Toko (kasir) ${storeTransactions} · Photobox (app) ${photobox.transactions}`
                                 : "Transaksi"}
                             icon={IconClock}
                             gradient="from-warning-500 to-warning-600"

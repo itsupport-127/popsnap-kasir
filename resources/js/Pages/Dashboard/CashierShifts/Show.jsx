@@ -174,11 +174,11 @@ function PhotoboxRecapTable({ recap }) {
                     </tr>
                 </thead>
                 <tbody>
-                    {items.map((item) => (
-                        <tr key={item.name} className="border-t border-slate-100 dark:border-slate-800">
-                            <td className="px-3 py-2 text-slate-700 dark:text-slate-300">{item.name}</td>
-                            <td className={`${num} font-semibold text-slate-900 dark:text-white`}>{item.qty}</td>
-                            <td className={`${num} text-slate-600 dark:text-slate-400`}>{formatCurrency(item.revenue)}</td>
+                    {items.map((item, idx) => (
+                        <tr key={`${idx}-${item.name}`} className={`border-t border-slate-100 dark:border-slate-800 ${item.sub ? "bg-amber-50/50 dark:bg-amber-500/5" : ""}`}>
+                            <td className={`px-3 py-2 ${item.sub ? "pl-8 text-xs text-amber-700 dark:text-amber-400" : "text-slate-700 dark:text-slate-300"}`}>{item.sub ? `↳ ${item.name}` : item.name}</td>
+                            <td className={`${num} ${item.sub ? "text-xs text-amber-700 dark:text-amber-400" : "font-semibold text-slate-900 dark:text-white"}`}>{item.qty}</td>
+                            <td className={`${num} ${item.sub ? "text-xs text-amber-700 dark:text-amber-400" : "text-slate-600 dark:text-slate-400"}`}>{formatCurrency(item.revenue)}</td>
                         </tr>
                     ))}
                     <tr className="border-t border-slate-200 font-bold dark:border-slate-700">
@@ -230,8 +230,8 @@ function PreviewModal({ open, onClose, summary, recap, photoboxRecap, note, subj
                         </div>
                         <div className="px-5 py-4">
                             {row("Cash", formatCurrency(summary.cash))}
-                            {row("Qris", formatCurrency(summary.qris))}
-                            {row(`Photobox (${summary.photoboxCount} transaksi)`, formatCurrency(summary.photobox))}
+                            {row("QRIS Toko (kasir)", formatCurrency(summary.qris))}
+                            {row(`QRIS Photobox (app, ${summary.photoboxCount} transaksi)`, formatCurrency(summary.photobox))}
                             {row("Total Penjualan", formatCurrency(summary.total))}
                             {row("Pengeluaran", formatCurrency(summary.expense), true)}
 
@@ -516,11 +516,11 @@ export default function Show({
                                 <p className="mt-2 text-sm text-slate-900 dark:text-white">{cashierShift.sales_returns_count}</p>
                             </div>
                             <div>
-                                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Penjualan Non Tunai</p>
+                                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Non Tunai Toko (kasir)</p>
                                 <p className="mt-2 text-sm text-slate-900 dark:text-white">{formatCurrency(cashierShift.non_cash_sales_total)}</p>
                             </div>
                             <div>
-                                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Penjualan Photobox</p>
+                                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">QRIS Photobox (app)</p>
                                 <p className="mt-2 text-sm text-slate-900 dark:text-white">
                                     {formatCurrency(cashierShift.photobox_sales_total)}
                                     <span className="ml-1 text-xs text-slate-500 dark:text-slate-400">({cashierShift.photobox_transactions_count || 0} transaksi)</span>
@@ -799,7 +799,7 @@ export default function Show({
                 <div className="rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
                     <h2 className="text-lg font-semibold text-slate-900 dark:text-white">Rekap Photobox</h2>
                     <p className="mb-4 mt-1 text-xs text-slate-500 dark:text-slate-400">
-                        Sesi photobox yang lunas selama shift ini (QRIS / voucher), per paket. Transaksi uji (mode simulasi atau sandbox) tidak ikut terhitung. Rekap yang sama ikut terkirim di email tutup kasir.
+                        Sesi photobox yang lunas selama shift ini (QRIS / voucher), per studio. Transaksi uji (mode simulasi atau sandbox) tidak ikut terhitung. Rekap yang sama ikut terkirim di email tutup kasir.
                     </p>
                     <PhotoboxRecapTable recap={photoboxRecap} />
                 </div>

@@ -230,19 +230,42 @@ class CashierShiftService
             return ['sessions' => 0, 'transactions' => 0, 'revenue' => 0, 'items' => []];
         }
 
-        // Dikelompokkan per STUDIO (bukan per paket), apa pun sumber transaksinya (app photobox atau diinput/diedit manual di kasir).
-        $items = $this->ownedPhotoboxQuery($shift)
+        // Dikelompokkan per STUDIO (bukan per paket), apa pun sumber transaksinya (app photobox atau diedit manual di kasir).
+        // Add Print dari app photobox dipisah jadi baris sendiri di bawah studionya ("sub"), dan tidak dihitung sebagai sesi foto.
+        $rows = $this->ownedPhotoboxQuery($shift)
             ->leftJoin('photobox_studios', 'photobox_studios.id', '=', 'photobox_transactions.studio_id')
-            ->select(DB::raw("COALESCE(photobox_studios.name, 'Tanpa studio') as name"), DB::raw('COUNT(*) as qty'), DB::raw('SUM(photobox_transactions.amount) as revenue'))
-            ->groupBy('photobox_studios.name')
-            ->orderByDesc('qty')
-            ->get()
-            ->map(fn ($r) => ['name' => $r->name, 'qty' => (int) $r->qty, 'revenue' => (int) $r->revenue])
-            ->values();
+            ->select(
+                DB::raw("COALESCE(photobox_studios.name, 'Tanpa studio') as name"),
+                DB::raw("CASE WHEN photobox_transactions.mode = 'addprint' THEN 1 ELSE 0 END as is_addprint"),
+                DB::raw('COUNT(*) as qty'),
+                DB::raw('SUM(photobox_transactions.amount) as revenue')
+            )
+            ->groupBy('photobox_studios.name', DB::raw("CASE WHEN photobox_transactions.mode = 'addprint' THEN 1 ELSE 0 END"))
+            ->get();
+
+        $studios = [];
+        foreach ($rows as $r) {
+            $studios[$r->name] ??= ['name' => $r->name, 'qty' => 0, 'revenue' => 0, 'sub' => false, 'addprint' => null];
+            if ((int) $r->is_addprint === 1) {
+                $studios[$r->name]['addprint'] = ['name' => 'Add Print (app)', 'qty' => (int) $r->qty, 'revenue' => (int) $r->revenue, 'sub' => true];
+            } else {
+                $studios[$r->name]['qty'] = (int) $r->qty;
+                $studios[$r->name]['revenue'] = (int) $r->revenue;
+            }
+        }
+        usort($studios, fn ($a, $b) => ($b['qty'] + ($b['addprint']['qty'] ?? 0)) <=> ($a['qty'] + ($a['addprint']['qty'] ?? 0)));
+
+        $items = collect();
+        foreach ($studios as $st) {
+            $items->push(['name' => $st['name'], 'qty' => $st['qty'], 'revenue' => $st['revenue'], 'sub' => false]);
+            if ($st['addprint']) {
+                $items->push($st['addprint']);
+            }
+        }
         $totals = $this->calculatePhotoboxTotals($shift);
 
         return [
-            'sessions' => (int) $items->sum('qty'),
+            'sessions' => (int) $items->where('sub', false)->sum('qty'),
             'transactions' => $totals['photobox_transactions_count'],
             'revenue' => $totals['photobox_sales_total'],
             'items' => $items->all(),
