@@ -232,7 +232,9 @@ class CashierShiftService
 
         // Dikelompokkan per STUDIO (bukan per paket), apa pun sumber transaksinya (app photobox atau diedit manual di kasir).
         // Add Print dari app photobox dipisah jadi baris sendiri di bawah studionya ("sub"), dan tidak dihitung sebagai sesi foto.
+        // Transaksi Rp 0 (mis. voucher permanen untuk membuka photobox) tidak ikut rekap; yang dihitung hanya yang bernominal.
         $rows = $this->ownedPhotoboxQuery($shift)
+            ->where('photobox_transactions.amount', '>', 0)
             ->leftJoin('photobox_studios', 'photobox_studios.id', '=', 'photobox_transactions.studio_id')
             ->select(
                 DB::raw("COALESCE(photobox_studios.name, 'Tanpa studio') as name"),

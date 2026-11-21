@@ -386,6 +386,31 @@ class CashierShiftTest extends TestCase
         $this->assertSame(80000, $recap['revenue']); // tapi nominalnya ikut total
     }
 
+    public function test_photobox_recap_skips_zero_amount_voucher_sessions(): void
+    {
+        $cashier = $this->createUserWithPermissions(['cashier-shifts-access']);
+        $shift = CashierShift::create([
+            'user_id' => $cashier->id, 'opened_by' => $cashier->id, 'opened_at' => now()->subHours(10), 'closed_at' => now()->subHour(),
+            'opening_cash' => 0, 'expected_cash' => 0, 'status' => 'closed',
+        ]);
+        $emma = new PhotoboxStudio(['name' => 'Studio Emma', 'is_active' => true, 'token_hash' => bin2hex(random_bytes(32))]);
+        $emma->save();
+        $jason = new PhotoboxStudio(['name' => 'Studio Jason', 'is_active' => true, 'token_hash' => bin2hex(random_bytes(32))]);
+        $jason->save();
+        $n = 0;
+        foreach ([[$emma, 'qris', 35000], [$jason, 'voucher', 0]] as [$st, $method, $amt]) {
+            PhotoboxTransaction::create([
+                'order_no' => 'PB-Z-'.(++$n), 'studio_id' => $st->id, 'template_name' => 'X', 'mode' => 'photo',
+                'method' => $method, 'amount' => $amt, 'status' => 'paid', 'paid_at' => now()->subHours(5),
+            ]);
+        }
+
+        $recap = app(\App\Services\CashierShiftService::class)->calculatePhotoboxRecap($shift);
+        $this->assertSame(['Studio Emma'], array_column($recap['items'], 'name')); // Studio Jason (voucher Rp 0) tidak tampil
+        $this->assertSame(1, $recap['sessions']);
+        $this->assertSame(35000, $recap['revenue']);
+    }
+
     public function test_admin_with_force_close_permission_can_close_other_cashier_shift(): void
     {
         $cashier = $this->createUserWithPermissions([
