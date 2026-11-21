@@ -16,6 +16,8 @@ use App\Services\AuditLogService;
 use App\Services\LoyaltyService;
 use App\Services\PromoService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Arr;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
@@ -223,6 +225,49 @@ class PromoController extends Controller
         return redirect()
             ->route('promos.index')
             ->with('success', 'Promo berhasil diperbarui.');
+    }
+
+    /**
+     * Duplikat promo: salin semua pengaturan + rincian (qty break / bundle / beli-gratis) jadi promo baru yang NONAKTIF,
+     * dengan kode baru (kalau manual) dan pemakaian dikosongkan. Setelah itu langsung dibuka di halaman edit.
+     */
+    public function duplicate(Request $request, Promo $promo)
+    {
+        $promo->load(['qtyBreaks', 'bundleItems', 'buyGetItems']);
+
+        $copy = DB::transaction(function () use ($promo, $request) {
+            $attrs = Arr::only($promo->getAttributes(), $promo->getFillable());
+            $attrs['name'] = Str::limit($promo->name, 240, '').' (Salinan)';
+            $attrs['code'] = $promo->activation_mode === Promo::ACTIVATION_MANUAL ? $this->generatePromoCode() : null;
+            $attrs['is_active'] = false;
+            $attrs['used_count'] = 0;
+            $attrs['is_used'] = false;
+            $attrs['used_at'] = null;
+            $attrs['used_transaction_id'] = null;
+            $attrs['created_by'] = $request->user()?->id;
+
+            $copy = Promo::create($attrs);
+
+            foreach (['qtyBreaks', 'bundleItems', 'buyGetItems'] as $rel) {
+                foreach ($promo->{$rel} as $child) {
+                    $copy->{$rel}()->create(Arr::except($child->getAttributes(), ['id', 'promo_id', 'created_at', 'updated_at']));
+                }
+            }
+
+            return $copy;
+        });
+
+        $this->auditLogService->log(
+            event: 'promo.created',
+            module: 'promos',
+            auditable: $copy,
+            description: 'Promo diduplikat dari "'.$promo->name.'".',
+            after: $this->auditPayload($copy->fresh(['qtyBreaks', 'bundleItems', 'buyGetItems']))
+        );
+
+        return redirect()
+            ->route('promos.edit', $copy)
+            ->with('success', 'Promo diduplikat (nonaktif). Periksa lalu aktifkan.');
     }
 
     public function destroy(Promo $promo)

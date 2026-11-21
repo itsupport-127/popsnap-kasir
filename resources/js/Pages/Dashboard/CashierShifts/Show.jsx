@@ -134,7 +134,7 @@ function ItemRecapTable({ recap, salesTotal = null }) {
                 </tbody>
                 <tfoot>
                     <tr className="border-t border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-800/60">
-                        <td className="px-3 py-2 font-bold text-slate-900 dark:text-white">Total item terjual</td>
+                        <td className="px-3 py-2 font-bold text-slate-900 dark:text-white">Total item kasir</td>
                         {showReturned && <td className={`${num} font-bold text-slate-900 dark:text-white`}>{recap.totals.qty}</td>}
                         {showReturned && <td className={`${num} font-bold text-amber-600`}>{recap.totals.returned}</td>}
                         <td className={`${num} font-bold text-slate-900 dark:text-white`}>{recap.totals.net_qty}</td>
@@ -233,15 +233,17 @@ function PreviewModal({ open, onClose, summary, recap, photoboxRecap, note, subj
                             {row("QRIS Toko (kasir)", formatCurrency(summary.qris))}
                             {row(`QRIS Photobox (app, ${summary.photoboxCount} transaksi)`, formatCurrency(summary.photobox))}
                             {row("Total Penjualan", formatCurrency(summary.total))}
+                            <p className="flex justify-between pl-3 text-xs text-slate-400"><span>↳ dari Kasir (manual): Cash + QRIS Toko</span><span>{formatCurrency((summary.cash || 0) + (summary.qris || 0))}</span></p>
+                            <p className="mb-2 flex justify-between pl-3 text-xs text-slate-400"><span>↳ dari App Photobox (booth)</span><span>{formatCurrency(summary.photobox || 0)}</span></p>
                             {row("Pengeluaran", formatCurrency(summary.expense), true)}
 
                             <div className="mt-4">
-                                <p className="mb-2 text-[11px] uppercase tracking-wide text-slate-400">Item Terjual</p>
+                                <p className="mb-2 text-[11px] uppercase tracking-wide text-slate-400">Item Terjual · KASIR (manual)</p>
                                 <ItemRecapTable recap={recap} salesTotal={summary.storeTotal} />
                             </div>
 
                             <div className="mt-4">
-                                <p className="mb-2 text-[11px] uppercase tracking-wide text-slate-400">Photobox</p>
+                                <p className="mb-2 text-[11px] uppercase tracking-wide text-slate-400">Photobox · dari APP booth</p>
                                 <PhotoboxRecapTable recap={photoboxRecap} />
                             </div>
 
@@ -783,7 +785,7 @@ export default function Show({
 
                 <div className="rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
                     <div className="flex flex-wrap items-baseline justify-between gap-2">
-                        <h2 className="text-lg font-semibold text-slate-900 dark:text-white">Rekap Item Terjual</h2>
+                        <h2 className="text-lg font-semibold text-slate-900 dark:text-white">Rekap Item Terjual · Kasir (manual)</h2>
                         {itemRecap?.totals?.net_qty > 0 && (
                             <p className="text-sm text-slate-500 dark:text-slate-400">
                                 {itemRecap.totals.net_qty} item · {itemRecap.totals.products} produk · {formatCurrency(itemRecap.totals.net_revenue)}
@@ -797,7 +799,7 @@ export default function Show({
                 </div>
 
                 <div className="rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
-                    <h2 className="text-lg font-semibold text-slate-900 dark:text-white">Rekap Photobox</h2>
+                    <h2 className="text-lg font-semibold text-slate-900 dark:text-white">Rekap Photobox · dari App booth</h2>
                     <p className="mb-4 mt-1 text-xs text-slate-500 dark:text-slate-400">
                         Sesi photobox yang lunas selama shift ini (QRIS / voucher), per studio. Transaksi uji (mode simulasi atau sandbox) tidak ikut terhitung. Rekap yang sama ikut terkirim di email tutup kasir.
                     </p>

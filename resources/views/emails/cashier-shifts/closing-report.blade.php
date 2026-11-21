@@ -38,6 +38,14 @@
                                     <td style="padding:10px 0 6px;text-align:right;border-top:1px solid #e2e8f0;font-weight:700;">{{ $rp($summary['total']) }}</td>
                                 </tr>
                                 <tr>
+                                    <td style="padding:2px 0 2px 12px;font-size:12px;color:#94a3b8;">↳ dari Kasir (manual): Cash + QRIS Toko</td>
+                                    <td style="padding:2px 0;text-align:right;font-size:12px;color:#94a3b8;">{{ $rp((int) ($summary['cash'] ?? 0) + (int) ($summary['qris'] ?? 0)) }}</td>
+                                </tr>
+                                <tr>
+                                    <td style="padding:2px 0 8px 12px;font-size:12px;color:#94a3b8;">↳ dari App Photobox (booth)</td>
+                                    <td style="padding:2px 0 8px;text-align:right;font-size:12px;color:#94a3b8;">{{ $rp($summary['photobox'] ?? 0) }}</td>
+                                </tr>
+                                <tr>
                                     <td style="padding:6px 0;color:#64748b;">Pengeluaran</td>
                                     <td style="padding:6px 0;text-align:right;font-weight:600;color:#b45309;">{{ $rp($summary['expense']) }}</td>
                                 </tr>
@@ -48,7 +56,8 @@
                                 $diff = (int) ($summary['store_total'] ?? $summary['total'] ?? 0) - (int) ($recap['totals']['net_revenue'] ?? 0);
                             @endphp
                             <div style="margin-top:16px;">
-                                <p style="margin:0 0 6px;font-size:12px;color:#64748b;text-transform:uppercase;letter-spacing:.05em;">Item Terjual</p>
+                                <p style="margin:0 0 6px;font-size:12px;color:#64748b;text-transform:uppercase;letter-spacing:.05em;">Item Terjual · KASIR (manual)</p>
+                                <p style="margin:0 0 6px;font-size:11px;color:#94a3b8;">Dijual lewat kasir toko (Cash / QRIS Toko). Tidak termasuk sesi dari app photobox.</p>
                                 @if (empty($recap['groups']))
                                     <p style="margin:0;font-size:14px;color:#94a3b8;">Belum ada item terjual pada shift ini.</p>
                                 @else
@@ -78,7 +87,7 @@
                                             @endforeach
                                         @endforeach
                                         <tr>
-                                            <td style="padding:10px 12px;font-weight:700;color:#0f172a;border-top:1px solid #e2e8f0;">Total item terjual</td>
+                                            <td style="padding:10px 12px;font-weight:700;color:#0f172a;border-top:1px solid #e2e8f0;">Total item kasir</td>
                                             <td style="padding:10px 8px;text-align:right;font-weight:700;color:#0f172a;border-top:1px solid #e2e8f0;">{{ $recap['totals']['net_qty'] }}</td>
                                             <td style="padding:10px 12px;text-align:right;font-weight:700;color:#0f172a;border-top:1px solid #e2e8f0;white-space:nowrap;">{{ $rp($recap['totals']['net_revenue']) }}</td>
                                         </tr>
@@ -96,7 +105,8 @@
                                 $pbRecap = $summary['photobox_recap'] ?? ['sessions' => 0, 'items' => []];
                             @endphp
                             <div style="margin-top:16px;">
-                                <p style="margin:0 0 6px;font-size:12px;color:#64748b;text-transform:uppercase;letter-spacing:.05em;">Photobox</p>
+                                <p style="margin:0 0 6px;font-size:12px;color:#64748b;text-transform:uppercase;letter-spacing:.05em;">Photobox · dari APP booth</p>
+                                <p style="margin:0 0 6px;font-size:11px;color:#94a3b8;">Sesi yang dibayar langsung di app photobox (QRIS photobox / transaksi photobox yang diedit di kasir), per studio.</p>
                                 @if (empty($pbRecap['items']))
                                     <p style="margin:0;font-size:14px;color:#94a3b8;">Belum ada sesi photobox pada shift ini.</p>
                                 @else

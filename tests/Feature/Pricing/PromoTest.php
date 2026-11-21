@@ -113,6 +113,33 @@ class PromoTest extends TestCase
         ]);
     }
 
+    public function test_promo_can_be_duplicated_as_inactive_copy_with_new_code_and_details(): void
+    {
+        $user = $this->createUserWithPermissions(['promos-access', 'promos-create']);
+        $promo = Promo::create([
+            'name' => 'Voucher Grand Opening', 'activation_mode' => Promo::ACTIVATION_MANUAL, 'code' => 'GRAND-OPEN',
+            'discount_kind' => Promo::KIND_QTY_BREAK, 'discount_type' => Promo::TYPE_PERCENTAGE, 'discount_value' => 10,
+            'target_type' => Promo::TARGET_ALL, 'customer_scope' => Promo::SCOPE_ALL, 'is_active' => true,
+            'used_count' => 3, 'is_used' => true, 'priority' => 5,
+        ]);
+        $promo->qtyBreaks()->create(['min_qty' => 3, 'discount_type' => 'percentage', 'discount_value' => 15, 'sort_order' => 0]);
+
+        $response = $this->actingAs($user)->post(route('promos.duplicate', $promo));
+
+        $copy = Promo::where('id', '!=', $promo->id)->firstOrFail();
+        $response->assertRedirect(route('promos.edit', $copy));
+        $this->assertSame('Voucher Grand Opening (Salinan)', $copy->name);
+        $this->assertFalse($copy->is_active);
+        $this->assertNotSame('GRAND-OPEN', $copy->code);
+        $this->assertNotEmpty($copy->code);
+        $this->assertSame(0, (int) $copy->used_count);
+        $this->assertFalse((bool) $copy->is_used);
+        $this->assertSame(5, (int) $copy->priority);
+        $this->assertSame(1, $copy->qtyBreaks()->count());
+        $this->assertSame(3, (int) $copy->qtyBreaks()->first()->min_qty);
+        $this->assertSame(1, $promo->qtyBreaks()->count()); // aslinya tidak berubah
+    }
+
     public function test_pricing_preview_respects_customer_scope(): void
     {
         $cashier = $this->createUserWithPermissions([
