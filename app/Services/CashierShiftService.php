@@ -381,18 +381,20 @@ class CashierShiftService
         $rows = $this->ownedPhotoboxQuery($shift)
             ->where('photobox_transactions.amount', '>', 0)
             ->leftJoin('photobox_studios', 'photobox_studios.id', '=', 'photobox_transactions.studio_id')
+            ->leftJoin('photobox_stores', 'photobox_stores.id', '=', 'photobox_studios.store_id')
             ->select(
                 DB::raw("COALESCE(photobox_studios.name, 'Tanpa studio') as name"),
+                DB::raw('photobox_stores.name as store_name'),
                 DB::raw("CASE WHEN photobox_transactions.mode = 'addprint' THEN 1 ELSE 0 END as is_addprint"),
                 DB::raw('COUNT(*) as qty'),
                 DB::raw('SUM(photobox_transactions.amount) as revenue')
             )
-            ->groupBy('photobox_studios.name', DB::raw("CASE WHEN photobox_transactions.mode = 'addprint' THEN 1 ELSE 0 END"))
+            ->groupBy('photobox_studios.name', 'photobox_stores.name', DB::raw("CASE WHEN photobox_transactions.mode = 'addprint' THEN 1 ELSE 0 END"))
             ->get();
 
         $studios = [];
         foreach ($rows as $r) {
-            $studios[$r->name] ??= ['name' => $r->name, 'qty' => 0, 'revenue' => 0, 'sub' => false, 'addprint' => null];
+            $studios[$r->name] ??= ['name' => $r->name, 'store' => $r->store_name, 'qty' => 0, 'revenue' => 0, 'sub' => false, 'addprint' => null];
             if ((int) $r->is_addprint === 1) {
                 $studios[$r->name]['addprint'] = ['name' => 'Add Print (app)', 'qty' => (int) $r->qty, 'revenue' => (int) $r->revenue, 'sub' => true];
             } else {
@@ -400,13 +402,34 @@ class CashierShiftService
                 $studios[$r->name]['revenue'] = (int) $r->revenue;
             }
         }
-        usort($studios, fn ($a, $b) => ($b['qty'] + ($b['addprint']['qty'] ?? 0)) <=> ($a['qty'] + ($a['addprint']['qty'] ?? 0)));
+        // Dikelompokkan per TOKO (studio tanpa toko di akhir), di dalam toko menurut jumlah sesi terbanyak.
+        usort($studios, function ($a, $b) {
+            $sa = $a['store'] ?? null;
+            $sb = $b['store'] ?? null;
+            if ($sa !== $sb) {
+                if ($sa === null) {
+                    return 1;
+                }
+                if ($sb === null) {
+                    return -1;
+                }
+
+                return strcasecmp($sa, $sb);
+            }
+
+            return ($b['qty'] + ($b['addprint']['qty'] ?? 0)) <=> ($a['qty'] + ($a['addprint']['qty'] ?? 0));
+        });
 
         $items = collect();
+        $stores = [];
         foreach ($studios as $st) {
-            $items->push(['name' => $st['name'], 'qty' => $st['qty'], 'revenue' => $st['revenue'], 'sub' => false]);
+            $items->push(['name' => $st['name'], 'store' => $st['store'], 'qty' => $st['qty'], 'revenue' => $st['revenue'], 'sub' => false]);
+            $key = $st['store'] ?? '';
+            $stores[$key] ??= ['name' => $st['store'], 'qty' => 0, 'revenue' => 0];
+            $stores[$key]['qty'] += $st['qty'];
+            $stores[$key]['revenue'] += $st['revenue'] + ($st['addprint']['revenue'] ?? 0);
             if ($st['addprint']) {
-                $items->push($st['addprint']);
+                $items->push($st['addprint'] + ['store' => $st['store']]);
             }
         }
         $totals = $this->calculatePhotoboxTotals($shift);
@@ -416,6 +439,8 @@ class CashierShiftService
             'transactions' => $totals['photobox_transactions_count'],
             'revenue' => $totals['photobox_sales_total'],
             'items' => $items->all(),
+            // subtotal per toko; hanya berarti bila ada studio yang punya toko
+            'stores' => collect($stores)->contains(fn ($x) => $x['name'] !== null) ? array_values($stores) : [],
         ];
     }
 
@@ -664,6 +689,40 @@ class CashierShiftService
         }
 
         return $query->where('user_id', $user->id);
+    }
+
+    /** Admin / superadmin (atau pengelola photobox) melihat transaksi photobox SEMUA toko dan studio. */
+    public function canSeeAllPhotobox(User $user): bool
+    {
+        return $user->isSuperAdmin() || $user->can('cashier-shifts-force-close') || $user->can('photobox-manage');
+    }
+
+    /**
+     * Batas transaksi photobox yang boleh dilihat user di halaman Transaksi Photobox.
+     * null = tanpa batas (admin). Selain itu hanya yang masuk cakupan SHIFT AKTIF-nya:
+     *   studio_ids : daftar studio (null = semua studio, bila shift memegang "semua studio"),
+     *   since      : waktu shift dibuka (yang lebih lama tidak tampil),
+     *   has_shift  : false bila tidak ada shift aktif -> tidak ada yang tampil.
+     *
+     * @return array{studio_ids: ?array<int,int>, since: ?\Illuminate\Support\Carbon, has_shift: bool, label: ?string}|null
+     */
+    public function photoboxScopeFor(User $user): ?array
+    {
+        if ($this->canSeeAllPhotobox($user)) {
+            return null;
+        }
+        $shift = $this->getActiveShiftForUser($user->id);
+        if (! $shift) {
+            return ['studio_ids' => [], 'since' => null, 'has_shift' => false, 'label' => null];
+        }
+        $ids = $shift->studioIds();
+        if ($ids === [] && $shift->photobox_store_id && Schema::hasTable('photobox_studios') && Schema::hasColumn('photobox_studios', 'store_id')) {
+            $ids = DB::table('photobox_studios')->where('store_id', $shift->photobox_store_id)->pluck('id')->map(fn ($i) => (int) $i)->all();
+        } elseif ($ids === []) {
+            $ids = null; // shift "semua studio"
+        }
+
+        return ['studio_ids' => $ids, 'since' => $shift->opened_at, 'has_shift' => true, 'label' => $this->scopeLabel($shift)];
     }
 
     public function reportRecipients(): array

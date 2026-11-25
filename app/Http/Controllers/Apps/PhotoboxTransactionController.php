@@ -8,6 +8,7 @@ use App\Models\PhotoboxStore;
 use App\Models\PhotoboxStudio;
 use App\Models\PhotoboxTransaction;
 use App\Models\Transaction;
+use App\Services\CashierShiftService;
 use App\Services\GalleryStatus;
 use App\Services\PhotoboxDiscountService;
 use App\Services\PhotoboxStats;
@@ -27,6 +28,7 @@ class PhotoboxTransactionController extends Controller
             'period' => $request->input('period', 'today'),
             'start_date' => $request->input('start_date'),
             'end_date' => $request->input('end_date'),
+            'store_id' => $request->input('store_id'),
             'studio_id' => $request->input('studio_id'),
             'method' => $request->input('method'),
             'status' => $request->input('status'),
@@ -36,6 +38,23 @@ class PhotoboxTransactionController extends Controller
         [$start, $end] = PhotoboxStats::range($filters['period'], $filters['start_date'], $filters['end_date']);
         $studioId = $filters['studio_id'] ? (int) $filters['studio_id'] : null;
 
+        // Hak lihat: admin/superadmin semua toko & studio; kasir hanya cakupan SHIFT AKTIF-nya (sejak shift dibuka).
+        $scope = $this->scopeFor($request);
+        $scopeIds = $scope['studio_ids'] ?? null; // null = tanpa batas studio
+        if ($scope && $scope['since'] && $start->lt($scope['since'])) {
+            $start = $scope['since']->copy();
+        }
+        $allowedIds = $scopeIds;
+        if ($filters['store_id'] !== null && $filters['store_id'] !== '') {
+            $inStore = PhotoboxStudio::query()
+                ->when($filters['store_id'] === 'none', fn ($q) => $q->whereNull('store_id'), fn ($q) => $q->where('store_id', (int) $filters['store_id']))
+                ->pluck('id')->map(fn ($i) => (int) $i)->all();
+            $allowedIds = $allowedIds === null ? $inStore : array_values(array_intersect($allowedIds, $inStore));
+        }
+        if ($studioId && $scopeIds !== null && ! in_array($studioId, $scopeIds, true)) {
+            $studioId = null; // studio di luar cakupan diabaikan
+        }
+
         $transactions = PhotoboxTransaction::query()
             ->with('studio:id,name')
             ->where(function ($q) use ($start, $end) {
@@ -44,6 +63,7 @@ class PhotoboxTransactionController extends Controller
                     ->orWhere(fn ($w) => $w->whereNull('paid_at')->whereBetween('booth_created_at', [$start, $end]));
             })
             ->when($studioId, fn ($q) => $q->where('studio_id', $studioId))
+            ->when($allowedIds !== null, fn ($q) => $q->whereIn('studio_id', $allowedIds))
             ->when($filters['method'], fn ($q, $v) => $q->where('method', $v))
             ->when($filters['status'], fn ($q, $v) => $q->where('status', $v))
             ->when($filters['test'] === 'only', fn ($q) => $q->where('is_test', true))
@@ -121,6 +141,7 @@ class PhotoboxTransactionController extends Controller
         $canManage = $request->user()?->can('photobox-manage') ?? false;
 
         $studioTx = PhotoboxTransaction::query()
+            ->when($scopeIds !== null, fn ($q) => $q->whereIn('studio_id', $scopeIds))
             ->selectRaw("studio_id, COUNT(*) as count, SUM(CASE WHEN status = 'paid' AND is_test = 0 THEN amount ELSE 0 END) as revenue")
             ->groupBy('studio_id')->get()->keyBy('studio_id');
 
@@ -128,21 +149,24 @@ class PhotoboxTransactionController extends Controller
             'filters' => $filters,
             'range' => ['start' => $start->toDateString(), 'end' => $end->toDateString()],
             'transactions' => $transactions,
-            'summary' => PhotoboxStats::summary($start, $end, $studioId),
-            'studios' => PhotoboxStudio::query()->orderBy('name')->get()->map(fn (PhotoboxStudio $s) => [
+            'summary' => PhotoboxStats::summary($start, $end, $studioId, $allowedIds),
+            'studios' => PhotoboxStudio::query()->when($scopeIds !== null, fn ($q) => $q->whereIn('id', $scopeIds))->orderBy('name')->get()->map(fn (PhotoboxStudio $s) => [
                 'id' => $s->id,
                 'tx_count' => (int) ($studioTx[$s->id]->count ?? 0),
                 'tx_revenue' => (int) ($studioTx[$s->id]->revenue ?? 0),
                 'name' => $s->name,
                 'store_id' => $s->store_id ? (int) $s->store_id : null,
                 'is_active' => $s->is_active,
-                'token_hint' => $s->token_hint,
+                'token_hint' => $scope ? null : $s->token_hint,
                 'last_seen_at' => $s->last_seen_at?->toIso8601String(),
                 'status' => $s->reportSummary(),
             ]),
-            'stores' => PhotoboxStore::query()->withCount('studios')->orderBy('name')->get()->map(fn (PhotoboxStore $st) => ['id' => (int) $st->id, 'name' => $st->name, 'studios_count' => (int) $st->studios_count]),
+            'stores' => PhotoboxStore::query()->withCount('studios')
+                ->when($scopeIds !== null, fn ($q) => $q->whereIn('id', PhotoboxStudio::query()->whereIn('id', $scopeIds)->whereNotNull('store_id')->select('store_id')))
+                ->orderBy('name')->get()->map(fn (PhotoboxStore $st) => ['id' => (int) $st->id, 'name' => $st->name, 'studios_count' => (int) $st->studios_count]),
             'galleryStatusOn' => GalleryStatus::baseUrl() !== null,
-            'testCount' => PhotoboxTransaction::query()->where('is_test', true)->when($studioId, fn ($q) => $q->where('studio_id', $studioId))->count(),
+            'testCount' => PhotoboxTransaction::query()->where('is_test', true)->when($studioId, fn ($q) => $q->where('studio_id', $studioId))->when($allowedIds !== null, fn ($q) => $q->whereIn('studio_id', $allowedIds))->count(),
+            'scope' => $scope ? ['restricted' => true, 'has_shift' => $scope['has_shift'], 'label' => $scope['label'], 'since' => $scope['since']?->toIso8601String()] : ['restricted' => false, 'has_shift' => true, 'label' => null, 'since' => null],
             'canManage' => $canManage,
             'canEdit' => $request->user()?->can('photobox-edit') ?? false,
             'canDelete' => $request->user()?->can('photobox-delete') ?? false,
@@ -150,6 +174,25 @@ class PhotoboxTransactionController extends Controller
             'newToken' => session('photobox_new_token'),
             'newTokenStudio' => session('photobox_new_token_studio'),
         ]);
+    }
+
+    private function scopeFor(Request $request): ?array
+    {
+        return $request->user() ? app(CashierShiftService::class)->photoboxScopeFor($request->user()) : null;
+    }
+
+    /** Kasir hanya boleh menyentuh transaksi di cakupan shift aktifnya (admin bebas). */
+    private function authorizeInScope(Request $request, PhotoboxTransaction $transaction): void
+    {
+        $scope = $this->scopeFor($request);
+        if ($scope === null) {
+            return;
+        }
+        $at = $transaction->paid_at ?? $transaction->booth_created_at ?? $transaction->created_at;
+        $ok = $scope['has_shift']
+            && ($scope['studio_ids'] === null || in_array((int) $transaction->studio_id, $scope['studio_ids'], true))
+            && (! $scope['since'] || ! $at || $at->gte($scope['since']));
+        abort_unless($ok, 403, 'Transaksi ini di luar toko/studio shift Anda.');
     }
 
     /** Ubah transaksi. Ringkasan & dashboard dihitung dari tabel ini, jadi pendapatan otomatis ikut menyesuaikan. */
@@ -176,6 +219,7 @@ class PhotoboxTransactionController extends Controller
     /** Simpan nama + nomor WhatsApp tamu untuk satu transaksi photobox (kosongkan nomor = hapus). Tidak mengubah data kasir. */
     public function saveContact(Request $request, PhotoboxTransaction $transaction): RedirectResponse
     {
+        $this->authorizeInScope($request, $transaction);
         $data = $request->validate(['name' => 'nullable|string|max:80', 'wa' => 'nullable|string|max:30']);
         $wa = GalleryStatus::waNumber($data['wa'] ?? null);
         if (! empty($data['wa']) && ! $wa) {
@@ -196,6 +240,7 @@ class PhotoboxTransactionController extends Controller
 
     public function update(Request $request, PhotoboxTransaction $transaction): RedirectResponse
     {
+        $this->authorizeInScope($request, $transaction);
         $data = $request->validate([
             'template_name' => ['nullable', 'string', 'max:255'],
             'method' => ['required', 'in:qris,voucher,free'],
@@ -229,6 +274,7 @@ class PhotoboxTransactionController extends Controller
     /** Tandai / lepas tanda TEST (mis. gateway masih sandbox padahal uang asli). Pendapatan, shift & dashboard otomatis menyesuaikan; booth ikut menerima perubahannya. */
     public function toggleTest(Request $request, PhotoboxTransaction $transaction): RedirectResponse
     {
+        $this->authorizeInScope($request, $transaction);
         $data = $request->validate(['is_test' => ['required', 'boolean']]);
         $transaction->forceFill(['is_test' => (bool) $data['is_test'], 'edited_at' => now()])->save();
 
@@ -242,11 +288,14 @@ class PhotoboxTransactionController extends Controller
     public function destroyTests(Request $request): RedirectResponse
     {
         $studioId = $request->filled('studio_id') ? (int) $request->input('studio_id') : null;
-        $ids = PhotoboxTransaction::query()->where('is_test', true)
+        $scopeIds = $this->scopeFor($request)['studio_ids'] ?? null;
+        $restricted = $this->scopeFor($request) !== null;
+        $inScope = fn ($q) => $q->when($restricted, fn ($w) => $w->whereIn('studio_id', $scopeIds ?? PhotoboxStudio::query()->pluck('id')->all()));
+        $ids = PhotoboxTransaction::query()->where('is_test', true)->tap($inScope)
             ->when($studioId, fn ($q) => $q->where('studio_id', $studioId))
             ->orderBy('id')->limit(100)->pluck('id');
         $deleted = $ids->isEmpty() ? 0 : PhotoboxTransaction::query()->whereIn('id', $ids)->delete();
-        $left = PhotoboxTransaction::query()->where('is_test', true)->when($studioId, fn ($q) => $q->where('studio_id', $studioId))->count();
+        $left = PhotoboxTransaction::query()->where('is_test', true)->tap($inScope)->when($studioId, fn ($q) => $q->where('studio_id', $studioId))->count();
 
         return back()->with('success', $deleted.' transaksi TEST dihapus'.($left > 0 ? ", masih ada {$left}: klik lagi untuk melanjutkan." : '.'));
     }
@@ -265,8 +314,9 @@ class PhotoboxTransactionController extends Controller
     }
 
     /** Hapus = soft delete: pendapatan berkurang, dan kiriman ulang dari booth tidak akan membuatnya muncul lagi. */
-    public function destroy(PhotoboxTransaction $transaction): RedirectResponse
+    public function destroy(Request $request, PhotoboxTransaction $transaction): RedirectResponse
     {
+        $this->authorizeInScope($request, $transaction);
         $orderNo = $transaction->order_no;
         $this->releasePromoQuota($transaction);
         $transaction->delete();
@@ -276,8 +326,11 @@ class PhotoboxTransactionController extends Controller
 
     public function storeStudio(Request $request): RedirectResponse
     {
-        $data = $request->validate(['name' => ['required', 'string', 'max:100']]);
-        $studio = new PhotoboxStudio(['name' => $data['name'], 'is_active' => true, 'token_hash' => bin2hex(random_bytes(32))]);
+        $data = $request->validate([
+            'name' => ['required', 'string', 'max:100'],
+            'store_id' => ['nullable', 'integer', 'exists:photobox_stores,id'],
+        ]);
+        $studio = new PhotoboxStudio(['name' => $data['name'], 'store_id' => $data['store_id'] ?? null, 'is_active' => true, 'token_hash' => bin2hex(random_bytes(32))]);
         $studio->save();
         $token = $studio->issueToken();
 

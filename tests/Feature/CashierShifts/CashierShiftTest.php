@@ -716,6 +716,119 @@ class CashierShiftTest extends TestCase
         $this->assertSame('Semua studio', $svc->scopeLabel($this->studioShift($a, now()->subHours(2))));
     }
 
+    /** Props halaman Transaksi Photobox untuk user tertentu (dipanggil langsung; render Inertia butuh manifest Vite). */
+    private function photoboxIndexProps(User $user, array $query = []): array
+    {
+        $request = \Illuminate\Http\Request::create('/dashboard/photobox-transactions', 'GET', array_merge(['period' => 'today'], $query));
+        $request->setUserResolver(fn () => $user);
+        \Illuminate\Support\Facades\Http::fake(['*' => \Illuminate\Support\Facades\Http::response(['sessions' => [], 'orders' => []], 200)]);
+        $resp = app(\App\Http\Controllers\Apps\PhotoboxTransactionController::class)->index($request);
+        $ref = new \ReflectionProperty($resp, 'props');
+        $ref->setAccessible(true);
+
+        return $ref->getValue($resp);
+    }
+
+    public function test_cashier_sees_only_photobox_transactions_of_own_shift_scope_and_admin_sees_all(): void
+    {
+        Permission::firstOrCreate(['name' => 'photobox-access', 'guard_name' => 'web']);
+        $cashier = $this->createUserWithPermissions(['cashier-shifts-access', 'photobox-access']);
+        $admin = $this->createUserWithPermissions(['cashier-shifts-access', 'cashier-shifts-force-close', 'photobox-access']);
+        $popsnap = \App\Models\PhotoboxStore::create(['name' => 'POPSNAP']);
+        $ccm = \App\Models\PhotoboxStore::create(['name' => 'CCM']);
+        $this->inStore($this->studioWithSale('P1', 'PB-V-0001', 10000), $popsnap);
+        $this->inStore($this->studioWithSale('C1', 'PB-V-0002', 20000), $ccm);
+
+        // tanpa shift aktif: tidak ada yang tampil
+        $props = $this->photoboxIndexProps($cashier);
+        $this->assertSame(0, $props['transactions']->total());
+        $this->assertFalse($props['scope']['has_shift']);
+
+        $this->storeShift($cashier, now()->subHours(3), $popsnap->id);
+        $props = $this->photoboxIndexProps($cashier);
+        $this->assertSame(['PB-V-0001'], $props['transactions']->pluck('order_no')->all());
+        $this->assertSame(10000, $props['summary']['revenue']);
+        $this->assertSame(['P1'], collect($props['studios'])->pluck('name')->all()); // CCM tidak bocor lewat daftar studio
+        $this->assertSame(['POPSNAP'], collect($props['stores'])->pluck('name')->all());
+        $this->assertTrue($props['scope']['restricted']);
+        // minta studio toko lain lewat filter -> diabaikan
+        $other = PhotoboxStudio::where('name', 'C1')->first();
+        $props = $this->photoboxIndexProps($cashier, ['studio_id' => $other->id]);
+        $this->assertSame(['PB-V-0001'], $props['transactions']->pluck('order_no')->all());
+
+        // admin: semua, dan bisa memisah per toko
+        $props = $this->photoboxIndexProps($admin);
+        $this->assertSame(2, $props['transactions']->total());
+        $this->assertFalse($props['scope']['restricted']);
+        $props = $this->photoboxIndexProps($admin, ['store_id' => $ccm->id]);
+        $this->assertSame(['PB-V-0002'], $props['transactions']->pluck('order_no')->all());
+        $this->assertSame(20000, $props['summary']['revenue']);
+        $props = $this->photoboxIndexProps($admin, ['store_id' => 'none']);
+        $this->assertSame(0, $props['transactions']->total());
+    }
+
+    public function test_cashier_cannot_edit_photobox_transaction_outside_own_scope(): void
+    {
+        foreach (['photobox-access', 'photobox-edit', 'photobox-delete'] as $perm) {
+            Permission::firstOrCreate(['name' => $perm, 'guard_name' => 'web']);
+        }
+        $cashier = $this->createUserWithPermissions(['cashier-shifts-access', 'photobox-access', 'photobox-edit', 'photobox-delete']);
+        $popsnap = \App\Models\PhotoboxStore::create(['name' => 'POPSNAP']);
+        $ccm = \App\Models\PhotoboxStore::create(['name' => 'CCM']);
+        $this->inStore($this->studioWithSale('P1', 'PB-V-0003', 10000), $popsnap);
+        $this->inStore($this->studioWithSale('C1', 'PB-V-0004', 20000), $ccm);
+        $this->storeShift($cashier, now()->subHours(3), $popsnap->id);
+        $mine = PhotoboxTransaction::where('order_no', 'PB-V-0003')->first();
+        $theirs = PhotoboxTransaction::where('order_no', 'PB-V-0004')->first();
+
+        $this->withoutExceptionHandling();
+        foreach ([
+            fn () => $this->actingAs($cashier)->put(route('photobox-transactions.test', $theirs), ['is_test' => true]),
+            fn () => $this->actingAs($cashier)->delete(route('photobox-transactions.destroy', $theirs)),
+        ] as $call) {
+            try {
+                $call();
+                $this->fail('Harus ditolak 403');
+            } catch (\Symfony\Component\HttpKernel\Exception\HttpException $e) {
+                $this->assertSame(403, $e->getStatusCode());
+            }
+        }
+        $this->assertNotNull($theirs->fresh());
+        $this->assertFalse((bool) $theirs->fresh()->is_test);
+
+        $this->actingAs($cashier)->put(route('photobox-transactions.test', $mine), ['is_test' => true])->assertRedirect();
+        $this->assertTrue((bool) $mine->fresh()->is_test);
+    }
+
+    public function test_shift_recap_and_email_group_studios_by_store_and_stay_inside_scope(): void
+    {
+        $a = $this->createUserWithPermissions(['cashier-shifts-access']);
+        $popsnap = \App\Models\PhotoboxStore::create(['name' => 'POPSNAP']);
+        $ccm = \App\Models\PhotoboxStore::create(['name' => 'CCM']);
+        $this->inStore($this->studioWithSale('Studio 1990', 'PB-V-0005', 35000), $popsnap);
+        $this->inStore($this->studioWithSale('Studio Vintage', 'PB-V-0006', 35000), $popsnap);
+        $this->inStore($this->studioWithSale('Studio CCM', 'PB-V-0007', 50000), $ccm);
+
+        $shift = $this->storeShift($a, now()->subHours(3), $popsnap->id);
+        $svc = app(\App\Services\CashierShiftService::class);
+        $recap = $svc->calculatePhotoboxRecap($shift);
+        $this->assertSame(['Studio 1990', 'Studio Vintage'], array_column($recap['items'], 'name'));
+        $this->assertSame(70000, $recap['revenue']);
+        $this->assertSame([['name' => 'POPSNAP', 'qty' => 2, 'revenue' => 70000]], $recap['stores']);
+
+        $html = (new CashierShiftClosingReportMail($shift->fresh()))->render();
+        $this->assertStringContainsString('Toko POPSNAP', $html);
+        $this->assertStringContainsString('Studio 1990', $html);
+        $this->assertStringNotContainsString('Studio CCM', $html); // toko lain tidak ikut di email shift ini
+        $this->assertStringNotContainsString('Rp 50.000', $html);
+
+        // shift "semua studio" menampilkan dua toko dengan subtotal masing-masing
+        $all = $this->studioShift($this->createUserWithPermissions(['cashier-shifts-access']), now()->subHours(2));
+        $recapAll = $svc->calculatePhotoboxRecap($all);
+        // POPSNAP sudah dimiliki shift toko (cakupan lebih spesifik); sisanya, CCM, jatuh ke shift "semua studio"
+        $this->assertSame([['name' => 'CCM', 'qty' => 1, 'revenue' => 50000]], $recapAll['stores']);
+    }
+
     private function createUserWithPermissions(array $permissions): User
     {
         $user = User::factory()->create();

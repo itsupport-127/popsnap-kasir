@@ -154,6 +154,15 @@ memegang satu toko lengkap atau hanya sebagian studio di toko itu.
   `StoreCashierShiftRequest`, `CashierShiftController`, `TransactionController`, `PhotoboxTransactionController` (store CRUD + `updateStudio`),
   `routes/web.php`, `ShiftStudioPicker.jsx`, `CashierShifts/Index|Show.jsx`, `Transactions/Index.jsx`, `PhotoboxTransactions/Index.jsx`, email blade.
 
+**Hak lihat transaksi photobox (tambahan 2b):**
+- Admin/superadmin (superadmin, izin `cashier-shifts-force-close`, atau `photobox-manage`) melihat semua toko & studio, dengan filter **Toko** dan **Studio** terpisah (termasuk "Tanpa toko").
+- Kasir biasa hanya melihat transaksi **cakupan shift aktifnya** (studio/toko yang dipilih) **sejak shift dibuka**; ringkasan, daftar studio, jumlah TEST ikut dibatasi.
+  Tanpa shift aktif → kosong dengan pesan. Studio/toko lain di luar cakupan tidak bocor lewat filter.
+- Ubah / tandai TEST / hapus / simpan kontak WA pada transaksi di luar cakupan → 403. Hapus massal TEST dibatasi ke cakupan.
+- Email & detail shift: rekap photobox sudah hanya memuat cakupan shift (aturan kepemilikan); sekarang dikelompokkan **per toko dengan subtotal**; label "Cakupan Photobox".
+- UI kelola: kartu per toko berisi studionya, tambah studio langsung di kartu toko, menu "Kelola" per studio (pindah toko, ubah nama, token baru, nonaktifkan, hapus); responsif 1/2/3 kolom.
+- Catatan: dashboard utama (`DashboardController`) masih menampilkan ringkasan photobox semua studio (tidak diubah).
+
 Langkah pasang: ekstrak zip → `php artisan migrate` → `npm run build` → buat toko di Transaksi Photobox → tetapkan studio ke tokonya → buka shift uji.
 Rollback: `php artisan migrate:rollback --step=1` (hapus tabel toko + dua kolom); shift kembali "semua studio / studio tertentu".
 

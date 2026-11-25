@@ -116,8 +116,20 @@
                                             <td style="padding:6px 8px;font-size:11px;color:#94a3b8;text-transform:uppercase;letter-spacing:.05em;text-align:right;">Sesi</td>
                                             <td style="padding:6px 12px;font-size:11px;color:#94a3b8;text-transform:uppercase;letter-spacing:.05em;text-align:right;">Nominal</td>
                                         </tr>
+                                        @php $pbHasStores = ! empty($pbRecap['stores']); $pbLastStore = '__none__'; @endphp
                                         @foreach ($pbRecap['items'] as $pbItem)
                                             @php $pbSub = (bool) ($pbItem['sub'] ?? false); @endphp
+                                            @if ($pbHasStores && ! $pbSub && ($pbItem['store'] ?? null) !== $pbLastStore)
+                                                @php
+                                                    $pbLastStore = $pbItem['store'] ?? null;
+                                                    $pbStoreRow = collect($pbRecap['stores'])->first(fn ($x) => ($x['name'] ?? null) === $pbLastStore);
+                                                @endphp
+                                                <tr>
+                                                    <td style="padding:6px 12px;background:#f1f5f9;font-size:12px;font-weight:700;color:#334155;text-transform:uppercase;letter-spacing:.04em;border-top:1px solid #e2e8f0;">{{ $pbLastStore ? 'Toko '.$pbLastStore : 'Tanpa toko' }}</td>
+                                                    <td style="padding:6px 8px;background:#f1f5f9;text-align:right;font-size:12px;font-weight:700;color:#64748b;border-top:1px solid #e2e8f0;">{{ $pbStoreRow['qty'] ?? '' }}</td>
+                                                    <td style="padding:6px 12px;background:#f1f5f9;text-align:right;font-size:12px;font-weight:700;color:#64748b;border-top:1px solid #e2e8f0;white-space:nowrap;">{{ $pbStoreRow ? $rp($pbStoreRow['revenue']) : '' }}</td>
+                                                </tr>
+                                            @endif
                                             <tr>
                                                 <td style="padding:{{ $pbSub ? '3px 12px 3px 28px' : '6px 12px' }};color:{{ $pbSub ? '#b45309' : '#334155' }};font-size:{{ $pbSub ? '12px' : '14px' }};border-top:1px solid #f1f5f9;">{{ $pbSub ? '↳ ' : '' }}{{ $pbItem['name'] }}</td>
                                                 <td style="padding:{{ $pbSub ? '3px 8px' : '6px 8px' }};text-align:right;font-weight:{{ $pbSub ? '400' : '600' }};color:{{ $pbSub ? '#b45309' : '#0f172a' }};font-size:{{ $pbSub ? '12px' : '14px' }};border-top:1px solid #f1f5f9;white-space:nowrap;">{{ $pbItem['qty'] }}</td>
@@ -147,7 +159,7 @@
                                     <td style="padding:2px 0;text-align:right;">{{ $shift->user?->name ?? '-' }}</td>
                                 </tr>
                                                                 <tr>
-                                    <td style="padding:2px 0;">Studio Photobox</td>
+                                    <td style="padding:2px 0;">Cakupan Photobox</td>
                                     <td style="padding:2px 0;text-align:right;">{{ $summary['studio_label'] ?? 'Semua studio' }}</td>
                                 </tr>
                                 <tr>

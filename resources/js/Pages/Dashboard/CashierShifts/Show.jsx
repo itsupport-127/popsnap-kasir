@@ -156,6 +156,7 @@ function ItemRecapTable({ recap, salesTotal = null }) {
 
 function PhotoboxRecapTable({ recap }) {
     const items = recap?.items ?? [];
+    const hasStores = (recap?.stores ?? []).length > 0;
 
     if (items.length === 0) {
         return <p className="text-sm text-slate-500 dark:text-slate-400">Belum ada sesi photobox pada shift ini.</p>;
@@ -174,13 +175,26 @@ function PhotoboxRecapTable({ recap }) {
                     </tr>
                 </thead>
                 <tbody>
-                    {items.map((item, idx) => (
-                        <tr key={`${idx}-${item.name}`} className={`border-t border-slate-100 dark:border-slate-800 ${item.sub ? "bg-amber-50/50 dark:bg-amber-500/5" : ""}`}>
+                    {items.map((item, idx) => {
+                        const showStore = hasStores && !item.sub && (idx === 0 || (items[idx - 1].store ?? null) !== (item.store ?? null));
+                        const sub = showStore ? (recap.stores || []).find((x) => (x.name ?? null) === (item.store ?? null)) : null;
+                        return (
+                        <React.Fragment key={`${idx}-${item.name}`}>
+                        {showStore && (
+                            <tr className="border-t border-slate-200 bg-slate-50 dark:border-slate-700 dark:bg-slate-800/60">
+                                <td className="px-3 py-1.5 text-xs font-bold uppercase tracking-wide text-slate-600 dark:text-slate-300">{item.store ? `Toko ${item.store}` : "Tanpa toko"}</td>
+                                <td className={`${num} text-xs font-semibold text-slate-500`}>{sub?.qty ?? ""}</td>
+                                <td className={`${num} text-xs font-semibold text-slate-500`}>{sub ? formatCurrency(sub.revenue) : ""}</td>
+                            </tr>
+                        )}
+                        <tr className={`border-t border-slate-100 dark:border-slate-800 ${item.sub ? "bg-amber-50/50 dark:bg-amber-500/5" : ""}`}>
                             <td className={`px-3 py-2 ${item.sub ? "pl-8 text-xs text-amber-700 dark:text-amber-400" : "text-slate-700 dark:text-slate-300"}`}>{item.sub ? `↳ ${item.name}` : item.name}</td>
                             <td className={`${num} ${item.sub ? "text-xs text-amber-700 dark:text-amber-400" : "font-semibold text-slate-900 dark:text-white"}`}>{item.qty}</td>
                             <td className={`${num} ${item.sub ? "text-xs text-amber-700 dark:text-amber-400" : "text-slate-600 dark:text-slate-400"}`}>{formatCurrency(item.revenue)}</td>
                         </tr>
-                    ))}
+                        </React.Fragment>
+                        );
+                    })}
                     <tr className="border-t border-slate-200 font-bold dark:border-slate-700">
                         <td className="px-3 py-2 text-slate-900 dark:text-white">Total photobox</td>
                         <td className={`${num} text-slate-900 dark:text-white`}>{recap.sessions}</td>
@@ -498,7 +512,7 @@ export default function Show({
                                 <p className="mt-2 text-sm text-slate-900 dark:text-white">{cashierShift.user?.name || "-"}</p>
                             </div>
                             <div>
-                                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Studio Photobox</p>
+                                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Cakupan Photobox</p>
                                 <p className="mt-2 text-sm text-slate-900 dark:text-white">
                                     {cashierShift.photobox_scope_label ||
                                         (cashierShift.photobox_studios?.length

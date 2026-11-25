@@ -192,7 +192,125 @@ function WaContactModal({ t, onClose }) {
     );
 }
 
-export default function Index({ filters, range, transactions, summary, studios, stores = [], galleryStatusOn, canManage, canEdit, canDelete, testCount = 0, apiUrl, newToken, newTokenStudio }) {
+/** Kelola toko & studio: satu kartu per toko berisi studionya; "Tanpa toko" untuk yang belum dikelompokkan. */
+function StudioManager({ studios, stores, canManage, newToken, newTokenStudio, apiUrl, renameStudio, deleteStudio, renameStore, deleteStore, addStore, copy }) {
+    const [storeName, setStoreName] = useState("");
+    const [drafts, setDrafts] = useState({}); // nama studio baru per toko ("none" = tanpa toko)
+    const [menu, setMenu] = useState(null); // id studio yang menunya terbuka
+    const unassigned = studios.filter((s) => !s.store_id || !stores.some((st) => st.id === s.store_id));
+    const groups = [
+        ...stores.map((st) => ({ key: String(st.id), store: st, list: studios.filter((s) => s.store_id === st.id) })),
+        ...(unassigned.length > 0 || stores.length === 0 ? [{ key: "none", store: null, list: unassigned }] : []),
+    ];
+
+    const addStudio = (g) => {
+        const name = (drafts[g.key] || "").trim();
+        if (!name) return;
+        router.post(route("photobox-studios.store"), { name, store_id: g.store?.id ?? null }, { preserveScroll: true, onSuccess: () => setDrafts((d) => ({ ...d, [g.key]: "" })) });
+    };
+    const btn = "block w-full rounded-lg px-3 py-2 text-left text-sm hover:bg-slate-100 dark:hover:bg-slate-800";
+
+    const StudioRow = ({ s }) => {
+        const st = s.is_active && s.status ? BOOTH_STATE[s.status.state] || BOOTH_STATE.unknown : null;
+        return (
+            <li className="flex items-start gap-2 rounded-xl border border-slate-100 p-2.5 dark:border-slate-800" data-testid={`studio-row-${s.id}`}>
+                <span className={`mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full ${st ? st[0] : "bg-slate-300"}`} title={st ? st[2] : "Nonaktif"} />
+                <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-medium text-slate-800 dark:text-slate-200">
+                        {s.name} {!s.is_active && <span className="ml-1 rounded-full bg-slate-200 px-2 py-0.5 text-xs dark:bg-slate-700">nonaktif</span>}
+                    </p>
+                    <p className="text-xs text-slate-500">
+                        {st && <span className={`font-semibold ${st[1]}`} data-testid="booth-status">{st[2]} · </span>}
+                        {canManage && <>Token …{s.token_hint || "----"} · </>}terhubung {dt(s.last_seen_at)}
+                    </p>
+                    {s.is_active && s.status?.notes?.slice(0, 1).map((n, i) => <p key={i} className="text-xs text-slate-500">{n}</p>)}
+                </div>
+                {canManage && (
+                    <div className="relative shrink-0">
+                        <button type="button" onClick={() => setMenu(menu === s.id ? null : s.id)} className="rounded-lg border border-slate-200 px-2.5 py-1 text-xs font-medium text-slate-600 dark:border-slate-700 dark:text-slate-300" aria-label={`Menu ${s.name}`}>Kelola</button>
+                        {menu === s.id && (
+                            <div className="absolute right-0 z-20 mt-1 w-52 rounded-xl border border-slate-200 bg-white p-1 shadow-lg dark:border-slate-700 dark:bg-slate-900" onMouseLeave={() => setMenu(null)}>
+                                {stores.length > 0 && (
+                                    <label className="block px-3 py-2 text-xs text-slate-500">Pindah ke toko
+                                        <select value={s.store_id ?? ""} onChange={(e) => { setMenu(null); router.put(route("photobox-studios.update", s.id), { store_id: e.target.value || null }, { preserveScroll: true }); }} className="mt-1 w-full rounded-lg border border-slate-200 bg-transparent px-2 py-1.5 text-sm dark:border-slate-700" data-testid={`studio-store-${s.id}`}>
+                                            <option value="">Tanpa toko</option>
+                                            {stores.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}
+                                        </select>
+                                    </label>
+                                )}
+                                <button type="button" className={btn} onClick={() => { setMenu(null); renameStudio(s); }}>Ubah nama</button>
+                                <button type="button" className={btn} onClick={() => { setMenu(null); confirm(`Buat token baru untuk ${s.name}? Token lama langsung tidak berlaku.`) && router.post(route("photobox-studios.token", s.id)); }}>Token baru</button>
+                                <button type="button" className={btn} onClick={() => { setMenu(null); router.post(route("photobox-studios.toggle", s.id)); }}>{s.is_active ? "Nonaktifkan" : "Aktifkan"}</button>
+                                <button type="button" className={`${btn} text-rose-600`} onClick={() => { setMenu(null); deleteStudio(s); }}>Hapus studio</button>
+                            </div>
+                        )}
+                    </div>
+                )}
+            </li>
+        );
+    };
+
+    return (
+        <div className="mb-5 rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900" data-testid="store-manager">
+            {newToken && (
+                <div className="mb-4 rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+                    <p className="font-semibold">Token untuk studio “{newTokenStudio}” (hanya tampil sekarang, salin dan simpan):</p>
+                    <div className="mt-2 flex flex-wrap items-center gap-2">
+                        <code className="break-all rounded bg-white px-2 py-1 text-xs">{newToken}</code>
+                        <button type="button" onClick={() => copy(newToken)} className="inline-flex items-center gap-1 rounded-lg border border-amber-400 px-2 py-1 text-xs"><IconCopy size={14} /> Salin</button>
+                    </div>
+                    <p className="mt-2 text-xs">Isi di app Photobox: Pengaturan &gt; Cloud. URL kasir: <code>{apiUrl}</code></p>
+                </div>
+            )}
+
+            <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
+                <div>
+                    <h2 className="text-base font-bold text-slate-900 dark:text-white">Toko &amp; studio</h2>
+                    <p className="text-xs text-slate-500">Kelompokkan studio per toko. Shift kasir bisa memegang satu toko lengkap atau hanya sebagian studionya.</p>
+                </div>
+                {canManage && (
+                    <form onSubmit={(e) => { e.preventDefault(); const n = storeName.trim(); if (n) addStore(n, () => setStoreName("")); }} className="flex w-full gap-2 sm:w-auto">
+                        <input value={storeName} onChange={(e) => setStoreName(e.target.value)} placeholder="Nama toko baru, mis. CCM" className={`${field} min-w-0 flex-1 sm:w-60`} maxLength={100} />
+                        <button type="submit" disabled={!storeName.trim()} className="inline-flex shrink-0 items-center gap-1 rounded-xl bg-primary-500 px-4 text-sm font-semibold text-white disabled:opacity-50"><IconPlus size={16} /> Toko</button>
+                    </form>
+                )}
+            </div>
+
+            {studios.length === 0 && stores.length === 0 && <p className="text-sm text-slate-500">Belum ada toko atau studio. {canManage ? "Buat toko dulu, lalu tambahkan studionya." : ""}</p>}
+
+            <div className="grid gap-4 md:grid-cols-2 2xl:grid-cols-3">
+                {groups.map((g) => (
+                    <section key={g.key} className="flex flex-col rounded-2xl border border-slate-200 p-3 dark:border-slate-700" data-testid={`store-card-${g.key}`}>
+                        <header className="mb-2 flex items-center justify-between gap-2">
+                            <div className="min-w-0">
+                                <h3 className="truncate text-sm font-bold text-slate-800 dark:text-slate-100">{g.store ? g.store.name : stores.length > 0 ? "Tanpa toko" : "Studio"}</h3>
+                                <p className="text-xs text-slate-500">{g.list.length} studio{g.store ? "" : stores.length > 0 ? " · belum dikelompokkan" : ""}</p>
+                            </div>
+                            {canManage && g.store && (
+                                <div className="flex shrink-0 gap-1">
+                                    <button type="button" onClick={() => renameStore(g.store)} className="rounded-lg border border-amber-200 bg-amber-50 p-1.5 text-amber-700 dark:border-amber-800 dark:bg-amber-900/30" title="Ubah nama toko"><IconPencil size={14} /></button>
+                                    <button type="button" onClick={() => deleteStore({ ...g.store, studios_count: g.list.length })} className="rounded-lg border border-rose-200 bg-rose-50 p-1.5 text-rose-700 dark:border-rose-800 dark:bg-rose-900/30" title="Hapus toko"><IconTrash size={14} /></button>
+                                </div>
+                            )}
+                        </header>
+                        <ul className="flex-1 space-y-2">
+                            {g.list.length === 0 && <li className="rounded-xl border border-dashed border-slate-200 p-3 text-center text-xs text-slate-400 dark:border-slate-700">Belum ada studio di sini.</li>}
+                            {g.list.map((s) => <StudioRow key={s.id} s={s} />)}
+                        </ul>
+                        {canManage && (
+                            <form onSubmit={(e) => { e.preventDefault(); addStudio(g); }} className="mt-3 flex gap-2">
+                                <input value={drafts[g.key] || ""} onChange={(e) => setDrafts((d) => ({ ...d, [g.key]: e.target.value }))} placeholder={g.store ? `Studio baru di ${g.store.name}` : "Nama studio baru"} className={`${field} min-w-0 flex-1`} maxLength={100} />
+                                <button type="submit" disabled={!(drafts[g.key] || "").trim()} className="inline-flex shrink-0 items-center gap-1 rounded-xl border border-primary-500 px-3 text-sm font-semibold text-primary-600 disabled:opacity-50"><IconPlus size={16} /> Studio</button>
+                            </form>
+                        )}
+                    </section>
+                ))}
+            </div>
+        </div>
+    );
+}
+
+export default function Index({ filters, range, transactions, summary, studios, stores = [], scope = null, galleryStatusOn, canManage, canEdit, canDelete, testCount = 0, apiUrl, newToken, newTokenStudio }) {
     const [showStudios, setShowStudios] = useState(!!newToken || studios.length === 0);
     const form = useForm({ name: "" });
     const [editing, setEditing] = useState(null);
@@ -202,10 +320,10 @@ export default function Index({ filters, range, transactions, summary, studios, 
     const [searchText, setSearchText] = useState(filters.search || "");
     // LIVE (push via websocket/Reverb): begitu ada transaksi masuk / status booth berubah, server mengirim sinyal dan data di sini
     // diperbarui sendiri tanpa polling & tanpa reload halaman. Ditahan sementara saat dialog / edit terbuka supaya isian tidak hilang.
-    const { status: liveStatus, enabled: liveOn, setEnabled: setLiveOn, lastAt } = useLiveRefresh({ only: ["transactions", "summary", "studios", "testCount"], pause: !!editing || !!waFor || form.processing || editForm.processing });
+    const { status: liveStatus, enabled: liveOn, setEnabled: setLiveOn, lastAt } = useLiveRefresh({ only: ["transactions", "summary", "studios", "stores", "scope", "testCount"], pause: !!editing || !!waFor || form.processing || editForm.processing });
     useEffect(() => { setSearchText(filters.search || ""); }, [filters.search]); // ikut berubah kalau halaman dibuka dengan pencarian dari link lain
-    const hasFilters = !!(filters.studio_id || filters.method || filters.status || filters.search || filters.test);
-    const resetFilters = () => { setSearchText(""); go({ studio_id: "", method: "", status: "", search: "", test: "" }); };
+    const hasFilters = !!(filters.store_id || filters.studio_id || filters.method || filters.status || filters.search || filters.test);
+    const resetFilters = () => { setSearchText(""); go({ store_id: "", studio_id: "", method: "", status: "", search: "", test: "" }); };
 
     const renameStudio = (s) => {
         Swal.fire({
@@ -223,11 +341,7 @@ export default function Index({ filters, range, transactions, summary, studios, 
             }
         });
     };
-    const [newStore, setNewStore] = useState("");
-    const addStore = () => {
-        if (!newStore.trim()) return;
-        router.post(route("photobox-stores.store"), { name: newStore.trim() }, { preserveScroll: true, onSuccess: () => setNewStore("") });
-    };
+    const addStore = (name, done) => router.post(route("photobox-stores.store"), { name }, { preserveScroll: true, onSuccess: done });
     const renameStore = (st) => {
         Swal.fire({ title: "Ubah nama toko", input: "text", inputValue: st.name, inputAttributes: { maxlength: 100 }, showCancelButton: true, confirmButtonText: "Simpan", cancelButtonText: "Batal",
             inputValidator: (v) => (!v || !v.trim() ? "Nama toko wajib diisi" : undefined),
@@ -347,85 +461,16 @@ export default function Index({ filters, range, transactions, summary, studios, 
                 </div>
             </div>
 
-            {showStudios && (
-                <div className="mb-5 rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
-                    {newToken && (
-                        <div className="mb-4 rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
-                            <p className="font-semibold">Token untuk studio “{newTokenStudio}” (hanya tampil sekarang, salin dan simpan):</p>
-                            <div className="mt-2 flex flex-wrap items-center gap-2">
-                                <code className="break-all rounded bg-white px-2 py-1 text-xs">{newToken}</code>
-                                <button type="button" onClick={() => copy(newToken)} className="inline-flex items-center gap-1 rounded-lg border border-amber-400 px-2 py-1 text-xs"><IconCopy size={14} /> Salin</button>
-                            </div>
-                            <p className="mt-2 text-xs">Isi di app Photobox: Pengaturan &gt; Cloud. URL kasir: <code>{apiUrl}</code></p>
-                        </div>
-                    )}
-                    <div className="mb-4 rounded-xl border border-slate-100 p-3 dark:border-slate-800" data-testid="store-manager">
-                        <p className="mb-2 text-sm font-semibold text-slate-700 dark:text-slate-200">Toko</p>
-                        <p className="mb-2 text-xs text-slate-500">Kelompokkan studio per toko (mis. POPSNAP, CCM). Shift kasir bisa memegang satu toko beserta semua studionya.</p>
-                        <div className="flex flex-wrap gap-2">
-                            {stores.length === 0 && <span className="text-xs text-slate-500">Belum ada toko.</span>}
-                            {stores.map((st) => (
-                                <span key={st.id} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-1.5 text-sm dark:border-slate-700">
-                                    {st.name} <span className="text-xs text-slate-500">({st.studios_count} studio)</span>
-                                    {canManage && (<>
-                                        <button type="button" onClick={() => renameStore(st)} className="text-amber-600" title="Ubah nama"><IconPencil size={14} /></button>
-                                        <button type="button" onClick={() => deleteStore(st)} className="text-rose-600" title="Hapus toko"><IconTrash size={14} /></button>
-                                    </>)}
-                                </span>
-                            ))}
-                        </div>
-                        {canManage && (
-                            <form onSubmit={(e) => { e.preventDefault(); addStore(); }} className="mt-2 flex flex-wrap gap-2">
-                                <input value={newStore} onChange={(e) => setNewStore(e.target.value)} placeholder="Nama toko, mis. CCM" className={`${field} w-56`} />
-                                <button type="submit" disabled={!newStore.trim()} className="inline-flex items-center gap-1 rounded-xl border border-primary-500 px-3 text-sm font-semibold text-primary-600 disabled:opacity-50"><IconPlus size={16} /> Tambah toko</button>
-                            </form>
-                        )}
-                    </div>
-                    <div className="space-y-2">
-                        {studios.length === 0 && <p className="text-sm text-slate-500">Belum ada studio. Tambahkan studio pertama di bawah.</p>}
-                        {studios.map((s) => (
-                            <div key={s.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-100 px-3 py-2 dark:border-slate-800">
-                                <div>
-                                    <p className="font-medium text-slate-800 dark:text-slate-200">{s.name} {!s.is_active && <span className="ml-1 rounded-full bg-slate-200 px-2 py-0.5 text-xs">nonaktif</span>}</p>
-                                    <p className="text-xs text-slate-500">Token …{s.token_hint || "----"} · terakhir terhubung: {dt(s.last_seen_at)}</p>
-                                    {stores.length > 0 && (
-                                        canManage ? (
-                                            <p className="text-xs text-slate-500">Toko:{" "}
-                                                <select value={s.store_id ?? ""} onChange={(e) => router.put(route("photobox-studios.update", s.id), { store_id: e.target.value || null }, { preserveScroll: true })} className="rounded-lg border border-slate-200 bg-transparent px-2 py-0.5 text-xs dark:border-slate-700" data-testid={`studio-store-${s.id}`}>
-                                                    <option value="">Tanpa toko</option>
-                                                    {stores.map((st) => <option key={st.id} value={st.id}>{st.name}</option>)}
-                                                </select>
-                                            </p>
-                                        ) : (
-                                            <p className="text-xs text-slate-500">Toko: {stores.find((st) => st.id === s.store_id)?.name || "Tanpa toko"}</p>
-                                        )
-                                    )}
-                                    {s.is_active && s.status && (() => { const [dot, txt, label] = BOOTH_STATE[s.status.state] || BOOTH_STATE.unknown; return (
-                                        <div className="mt-1" data-testid="booth-status">
-                                            <span className={`inline-flex items-center gap-1.5 text-xs font-semibold ${txt}`}><span className={`h-2 w-2 rounded-full ${dot}`} />{label}</span>
-                                            {s.status.notes?.map((n, i) => <p key={i} className="text-xs text-slate-500">{n}</p>)}
-                                        </div>
-                                    ); })()}
-                                </div>
-                                {canManage && (
-                                    <div className="flex gap-2">
-                                        <button type="button" onClick={() => confirm(`Buat token baru untuk ${s.name}? Token lama langsung tidak berlaku.`) && router.post(route("photobox-studios.token", s.id))} className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs dark:border-slate-700">Token baru</button>
-                                        <button type="button" onClick={() => router.post(route("photobox-studios.toggle", s.id))} className="rounded-lg border border-slate-200 px-3 py-1.5 text-xs dark:border-slate-700">{s.is_active ? "Nonaktifkan" : "Aktifkan"}</button>
-                                        <button type="button" onClick={() => renameStudio(s)} className="inline-flex items-center gap-1 rounded-lg border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs text-amber-700 hover:bg-amber-100 dark:border-amber-800 dark:bg-amber-900/30 dark:text-amber-400"><IconPencil size={14} /> Ubah nama</button>
-                                        <button type="button" onClick={() => deleteStudio(s)} className="inline-flex items-center gap-1 rounded-lg border border-rose-200 bg-rose-50 px-3 py-1.5 text-xs text-rose-700 hover:bg-rose-100 dark:border-rose-800 dark:bg-rose-900/30 dark:text-rose-400"><IconTrash size={14} /> Hapus</button>
-                                    </div>
-                                )}
-                            </div>
-                        ))}
-                    </div>
-                    {canManage && (
-                        <form onSubmit={(e) => { e.preventDefault(); form.post(route("photobox-studios.store"), { onSuccess: () => form.reset() }); }} className="mt-3 flex flex-wrap gap-2">
-                            <input value={form.data.name} onChange={(e) => form.setData("name", e.target.value)} placeholder="Nama studio, mis. Studio Emma" className={`${field} w-64`} />
-                            <button type="submit" disabled={form.processing || !form.data.name.trim()} className="inline-flex items-center gap-1 rounded-xl bg-primary-500 px-4 text-sm font-semibold text-white disabled:opacity-50"><IconPlus size={16} /> Tambah studio</button>
-                            {form.errors.name && <span className="self-center text-xs text-rose-600">{form.errors.name}</span>}
-                        </form>
-                    )}
+            {scope?.restricted && (
+                <div className="mb-4 rounded-2xl border border-sky-200 bg-sky-50 p-3 text-sm text-sky-900 dark:border-sky-900 dark:bg-sky-950/30 dark:text-sky-200" data-testid="scope-banner">
+                    {scope.has_shift
+                        ? <>Menampilkan transaksi sesuai shift Anda: <b>{scope.label}</b>, sejak shift dibuka ({dt(scope.since)}). Admin bisa melihat semua toko dan studio.</>
+                        : <>Anda belum punya shift aktif, jadi tidak ada transaksi photobox yang ditampilkan. Buka shift dan pilih toko/studio untuk melihatnya.</>}
                 </div>
+            )}
+
+            {showStudios && (
+                <StudioManager {...{ studios, stores, canManage, newToken, newTokenStudio, apiUrl, renameStudio, deleteStudio, renameStore, deleteStore, addStore, copy }} />
             )}
 
             <div className="mb-4 space-y-4 rounded-2xl border border-slate-200 bg-white p-4 dark:border-slate-800 dark:bg-slate-900">
@@ -457,9 +502,10 @@ export default function Index({ filters, range, transactions, summary, studios, 
                 </div>
 
                 {/* Filter */}
-                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
                     {[
-                        ["Studio", "studio_id", "Semua studio", studios.map((s) => [s.id, s.name])],
+                        ...(stores.length > 0 ? [["Toko", "store_id", "Semua toko", [...stores.map((st) => [st.id, st.name]), ...(studios.some((s) => !s.store_id) ? [["none", "Tanpa toko"]] : [])]]] : []),
+                        ["Studio", "studio_id", "Semua studio", studios.filter((s) => !filters.store_id || (filters.store_id === "none" ? !s.store_id : String(s.store_id) === String(filters.store_id))).map((s) => [s.id, s.name])],
                         ["Metode bayar", "method", "Semua metode", Object.entries(METHOD_LABEL)],
                         ["Status", "status", "Semua status", Object.entries(STATUS_LABEL)],
                         ["Transaksi TEST", "test", "Tampilkan semua", [["hide", "Sembunyikan TEST"], ["only", "Hanya TEST"]]],
@@ -467,7 +513,7 @@ export default function Index({ filters, range, transactions, summary, studios, 
                         <label key={key} className="block">
                             <span className="mb-1 block text-xs font-medium text-slate-500 dark:text-slate-400">{label}</span>
                             <div className="relative">
-                                <select value={filters[key] || ""} onChange={(e) => go({ [key]: e.target.value })}
+                                <select value={filters[key] || ""} onChange={(e) => go(key === "store_id" ? { store_id: e.target.value, studio_id: "" } : { [key]: e.target.value })}
                                     className={`${field} w-full cursor-pointer appearance-none pr-9 ${filters[key] ? "!border-primary-500 !bg-primary-50 font-medium !text-primary-700 dark:!bg-primary-950/30 dark:!text-primary-300" : ""}`}>
                                     <option value="">{allLabel}</option>
                                     {options.map(([k, v]) => <option key={k} value={k}>{v}</option>)}
