@@ -69,6 +69,7 @@ export default function Index({
     loyaltyTierOptions = [],
     memberRegistrationEnabled = true,
     photoboxStudios = [],
+    photoboxStores = null,
 }) {
     const {
         auth,
@@ -206,6 +207,7 @@ export default function Index({
     const [promoCodeInput, setPromoCodeInput] = useState("");
     const [openingCashInput, setOpeningCashInput] = useState("");
     const [shiftStudioIds, setShiftStudioIds] = useState([]);
+    const [shiftStoreId, setShiftStoreId] = useState(null);
     const [shiftNotesInput, setShiftNotesInput] = useState("");
     const normalizedSelectedCategory =
         selectedCategory === null ? null : Number(selectedCategory);
@@ -577,6 +579,7 @@ export default function Index({
         router.post(route("cashier-shifts.store"), {
             opening_cash: Number(openingCashInput || 0),
             notes: shiftNotesInput,
+            photobox_store_id: shiftStoreId,
             photobox_studio_ids: shiftStudioIds,
             redirect_to: "transactions",
         });
@@ -993,8 +996,10 @@ export default function Index({
                             </div>
                             <ShiftStudioPicker
                                 studios={photoboxStudios}
-                                value={shiftStudioIds}
-                                onChange={setShiftStudioIds}
+                                stores={photoboxStores}
+                                storeId={shiftStoreId}
+                                studioIds={shiftStudioIds}
+                                onChange={(nextStore, nextStudios) => { setShiftStoreId(nextStore); setShiftStudioIds(nextStudios); }}
                                 className="md:col-span-2"
                             />
                         </div>

@@ -60,7 +60,7 @@ harga 0 → langsung cetak. Tercatat di Kasir sebagai `addprint`. Teks status ke
 
 ### 4.2 Shift kasir dan laporan
 
-1. Kasir membuka shift (modal awal, catatan, **studio photobox yang dipegang** — kosong = semua). Satu kasir hanya satu shift aktif.
+1. Kasir membuka shift (modal awal, catatan, **toko dan/atau studio photobox yang dipegang** — kosong = semua studio). Satu kasir hanya satu shift aktif.
 2. Transaksi toko dan retur selalu ke shift aktif **milik pembuatnya**. Daftar transaksi/retur non-superadmin hanya milik sendiri.
 3. **Transaksi photobox** tidak punya kasir; dikaitkan ke shift lewat **waktu bayar + studio** (aturan di §5.2).
 4. Tutup shift: hitung kas yang diharapkan vs aktual, selisih, total penjualan toko dan photobox; angka dibekukan saat tutup.
@@ -91,11 +91,11 @@ harga 0 → langsung cetak. Tercatat di Kasir sebagai `addprint`. Teks status ke
 
 ### 5.2 Kepemilikan transaksi photobox oleh shift (kasir)
 Tiap transaksi `paid`, asli (bukan TEST), `paid_at` dalam jendela shift, punya tepat satu pemilik:
-1. shift memiliki hanya transaksi dari studio yang dipegangnya (shift tanpa baris studio = semua studio, termasuk semua shift lama);
-2. shift yang menyebut studio itu **eksplisit** menang atas shift "semua studio";
+1. studio dikelompokkan ke **toko** (`photobox_stores`; studio boleh tanpa toko). Shift punya salah satu cakupan: studio tertentu (rank 0), satu toko penuh termasuk studio yang ditambah kemudian (rank 1), atau semua studio (rank 2; semua shift lama);
+2. cakupan yang lebih spesifik menang: studio tertentu > toko > semua studio;
 3. antar shift setingkat: dibuka paling awal menang (seri: id terkecil);
 4. shift lupa-tutup tidak mengklaim melewati 48 jam (`MAX_SHIFT_HOURS`).
-**Konsekuensi:** studio tanpa shift yang memegangnya (dan tanpa shift "semua studio") → penjualannya tidak masuk laporan shift mana pun.
+**Konsekuensi:** studio/toko tanpa shift yang memegangnya (dan tanpa shift "semua studio") → penjualannya tidak masuk laporan shift mana pun.
 
 ### 5.3 Data pelanggan
 Pelanggan, poin loyalti, kredit, voucher, segmen = milik **toko**, bukan per kasir/studio. Transaksi mencatat kasirnya, sehingga laporan dapat difilter tanpa memecah data.
@@ -114,7 +114,7 @@ Pelanggan, poin loyalti, kredit, voucher, segmen = milik **toko**, bukan per kas
 | 2 | Add Print: layar ditutup di tengah pembayaran → pengecekan status berhenti **[verifikasi: ada rekonsiliasi backend?]** | Uang masuk tanpa cetakan | Cek pembayaran tertinggal |
 | 3 | Kunci sesi unggahan GIF/klip/Live di memori | Restart backend → unggahan sesi aktif ditolak (kasus PB-1990-…-0008) | Simpan di DB + log penolakan |
 | 4 | Studio tanpa shift pemegang (kasir) | Penjualan tak masuk laporan | Peringatan di dashboard / satu shift "semua studio" |
-| 5 | Studio shift tidak bisa diubah setelah dibuka | Salah pilih → tutup & buka ulang | Edit studio pada shift terbuka (hak khusus) |
+| 5 | Cakupan toko/studio shift tidak bisa diubah setelah dibuka | Salah pilih → tutup & buka ulang | Edit cakupan pada shift terbuka (hak khusus) |
 | 6 | Kamera DSLR di Linux belum terbukti (Canon 1100D via gPhoto2; Nikon belum ada bridge) | Linux = webcam saja sampai diuji | Uji di booth + bridge Nikon |
 | 7 | Dua aplikasi kamera tidak bisa jalan bersamaan (mis. CamCo/PM2 vs POPSNAP) | Kamera "busy" | Skrip ganti aplikasi, satu autostart |
 | 8 | Import/export template via Remote belum ada | Salin template antar booth manual | Endpoint unggah besar + logika zip di backend |

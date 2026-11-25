@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Mail\CashierShiftClosingReportMail;
 use App\Models\CashierShift;
+use App\Models\PhotoboxStore;
 use App\Models\PhotoboxStudio;
 use App\Models\PhotoboxTransaction;
 use App\Models\Product;
@@ -52,7 +53,7 @@ class CashierShiftService
         return $shift;
     }
 
-    public function openShift(User $cashier, User $actor, int $openingCash, ?string $notes = null, array $studioIds = []): CashierShift
+    public function openShift(User $cashier, User $actor, int $openingCash, ?string $notes = null, array $studioIds = [], ?int $storeId = null): CashierShift
     {
         $existing = CashierShift::query()
             ->open()
@@ -67,7 +68,13 @@ class CashierShiftService
 
         $studioIds = collect($studioIds)->map(fn ($id) => (int) $id)->filter(fn ($id) => $id > 0)->unique()->values()->all();
 
-        return DB::transaction(function () use ($cashier, $actor, $openingCash, $notes, $studioIds) {
+        $storeId = $storeId && $storeId > 0 && Schema::hasTable('photobox_stores') && PhotoboxStore::query()->whereKey($storeId)->exists() ? $storeId : null;
+        if ($storeId !== null && $studioIds !== []) {
+            // Studio yang dipilih harus milik toko itu; yang lain dibuang.
+            $studioIds = PhotoboxStudio::query()->where('store_id', $storeId)->whereIn('id', $studioIds)->pluck('id')->map(fn ($id) => (int) $id)->all();
+        }
+
+        return DB::transaction(function () use ($cashier, $actor, $openingCash, $notes, $studioIds, $storeId) {
             $shift = CashierShift::create([
                 'user_id' => $cashier->id,
                 'opened_by' => $actor->id,
@@ -75,9 +82,11 @@ class CashierShiftService
                 'opening_cash' => $openingCash,
                 'expected_cash' => $openingCash,
                 'notes' => $notes,
+                'photobox_store_id' => $storeId,
                 'status' => CashierShift::STATUS_OPEN,
             ]);
 
+            // Tanpa toko & tanpa studio = semua studio. Dengan toko = semua studio toko itu. Dengan studio = hanya studio itu.
             // Kosong = semua studio. Diisi = transaksi photobox hanya dari studio-studio ini yang dikaitkan ke shift ini.
             if ($studioIds !== [] && Schema::hasTable('cashier_shift_studios')) {
                 DB::table('cashier_shift_studios')->insert(array_map(fn ($id) => [
@@ -206,20 +215,24 @@ class CashierShiftService
 
     /**
      * Transaksi photobox yang LUNAS, asli (bukan TEST), dan milik shift ini.
-     * Photobox tidak punya kasir, jadi dikaitkan lewat waktu bayar DAN studio.
+     * Photobox tidak punya kasir, jadi dikaitkan lewat waktu bayar DAN cakupan studio/toko shift.
      *
+     * Cakupan sebuah shift (makin spesifik makin menang):
+     *   0 = studio eksplisit  (ada baris di cashier_shift_studios)
+     *   1 = toko              (photobox_store_id terisi, tanpa baris studio) -> semua studio di toko itu, termasuk yang ditambah belakangan
+     *   2 = semua studio      (tanpa toko, tanpa baris studio; termasuk semua shift lama)
      * Aturan pemilik (tiap transaksi punya tepat satu pemilik):
-     *  1. Shift hanya bisa memiliki transaksi dari studio yang dipegangnya. Shift tanpa studio (cashier_shift_studios
-     *     kosong, termasuk semua shift lama) memegang SEMUA studio.
-     *  2. Shift yang menyebut studio transaksi itu secara eksplisit MENANG atas shift "semua studio".
-     *  3. Antar shift setingkat, yang dibuka paling awal menang (seri: id terkecil), supaya tidak dobel.
+     *   1. shift hanya memiliki transaksi dari studio dalam cakupannya;
+     *   2. bila beberapa shift terbuka mencakup transaksi itu, yang cakupannya lebih spesifik menang;
+     *   3. setingkat: yang dibuka paling awal menang (seri: id terkecil), supaya tidak dobel.
      * Shift lupa-tutup tidak ikut mengklaim di luar batas durasi wajar (MAX_SHIFT_HOURS).
      */
     private function ownedPhotoboxQuery(CashierShift $shift)
     {
         [$start, $end] = $this->shiftWindow($shift);
         $studioIds = $shift->studioIds();
-        $explicit = $studioIds !== [];
+        $storeId = $shift->photobox_store_id ? (int) $shift->photobox_store_id : null;
+        $rank = $studioIds !== [] ? 0 : ($storeId !== null ? 1 : 2);
         $hasPivot = Schema::hasTable('cashier_shift_studios');
 
         $query = PhotoboxTransaction::query()
@@ -227,11 +240,13 @@ class CashierShiftService
             ->where('status', 'paid')
             ->whereBetween('paid_at', [$start, $end]);
 
-        if ($explicit) {
+        if ($rank === 0) {
             $query->whereIn('studio_id', $studioIds);
+        } elseif ($rank === 1) {
+            $query->whereIn('studio_id', fn ($q) => $q->select('id')->from('photobox_studios')->where('store_id', $storeId));
         }
 
-        return $query->whereNotExists(function ($q) use ($shift, $start, $explicit, $hasPivot) {
+        return $query->whereNotExists(function ($q) use ($shift, $start, $rank, $hasPivot) {
             $q->select(DB::raw(1))->from('cashier_shifts as other')
                 ->where('other.id', '!=', $shift->id)
                 ->whereColumn('other.opened_at', '<=', 'photobox_transactions.paid_at')
@@ -239,31 +254,72 @@ class CashierShiftService
                 ->where('other.opened_at', '>=', $start->copy()->subHours(self::MAX_SHIFT_HOURS))
                 ->where(fn ($w) => $w->whereNull('other.closed_at')->orWhereColumn('other.closed_at', '>=', 'photobox_transactions.paid_at'));
 
-            $earlier = fn ($w) => $w->where('other.opened_at', '<', $shift->opened_at)
-                ->orWhere(fn ($x) => $x->where('other.opened_at', $shift->opened_at)->where('other.id', '<', $shift->id));
+            $earlierSql = '(other.opened_at < ? OR (other.opened_at = ? AND other.id < ?))';
+            $earlierBind = [$shift->opened_at, $shift->opened_at, $shift->id];
 
             if (! $hasPivot) {
-                $q->where($earlier);
+                $q->whereRaw($earlierSql, $earlierBind);
 
                 return;
             }
 
-            // shift lain menyebut studio transaksi ini secara eksplisit
-            $exact = fn ($w) => $w->whereExists(fn ($e) => $e->select(DB::raw(1))->from('cashier_shift_studios as css')
-                ->whereColumn('css.cashier_shift_id', 'other.id')
-                ->whereColumn('css.photobox_studio_id', 'photobox_transactions.studio_id'));
-            // shift lain memegang semua studio (tanpa baris studio sama sekali)
-            $generic = fn ($w) => $w->whereNotExists(fn ($e) => $e->select(DB::raw(1))->from('cashier_shift_studios as css2')
-                ->whereColumn('css2.cashier_shift_id', 'other.id'));
+            // Tingkat cakupan shift lain terhadap studio transaksi ini; NULL = tidak mencakup.
+            $otherRank = 'CASE
+                WHEN EXISTS (SELECT 1 FROM cashier_shift_studios css WHERE css.cashier_shift_id = other.id AND css.photobox_studio_id = photobox_transactions.studio_id) THEN 0
+                WHEN NOT EXISTS (SELECT 1 FROM cashier_shift_studios c2 WHERE c2.cashier_shift_id = other.id)
+                     AND other.photobox_store_id IS NOT NULL
+                     AND other.photobox_store_id = (SELECT ps.store_id FROM photobox_studios ps WHERE ps.id = photobox_transactions.studio_id) THEN 1
+                WHEN NOT EXISTS (SELECT 1 FROM cashier_shift_studios c3 WHERE c3.cashier_shift_id = other.id)
+                     AND other.photobox_store_id IS NULL THEN 2
+                ELSE NULL END';
 
-            if ($explicit) {
-                // Saya eksplisit: hanya shift eksplisit yang lebih awal yang bisa merebut.
-                $q->where($exact)->where($earlier);
-            } else {
-                // Saya "semua studio": shift eksplisit mana pun merebut; sesama "semua studio" yang lebih awal juga.
-                $q->where(fn ($w) => $w->where($exact)->orWhere(fn ($x) => $x->where($generic)->where($earlier)));
-            }
+            // shift lain merebut bila cakupannya lebih spesifik, atau sama dan dibuka lebih awal
+            $q->whereRaw("($otherRank) IS NOT NULL AND (($otherRank) < ? OR (($otherRank) = ? AND $earlierSql))", array_merge([$rank, $rank], $earlierBind));
         });
+    }
+
+    /**
+     * Toko beserta studionya untuk pemilih saat buka shift. 'unassigned' = studio yang belum punya toko.
+     *
+     * @return array{stores: array<int, array{id:int,name:string,studios:array<int,array{id:int,name:string}>}>, unassigned: array<int, array{id:int,name:string}>}
+     */
+    public function storeOptions(): array
+    {
+        if (! Schema::hasTable('photobox_studios') || ! Schema::hasTable('photobox_stores')) {
+            return ['stores' => [], 'unassigned' => $this->studioOptions()];
+        }
+
+        $studios = PhotoboxStudio::query()->orderBy('name')->get(['id', 'name', 'store_id']);
+        $stores = PhotoboxStore::query()->orderBy('name')->get(['id', 'name'])->map(fn ($st) => [
+            'id' => (int) $st->id,
+            'name' => $st->name,
+            'studios' => $studios->where('store_id', $st->id)->map(fn ($s) => ['id' => (int) $s->id, 'name' => $s->name])->values()->all(),
+        ])->all();
+
+        return [
+            'stores' => $stores,
+            'unassigned' => $studios->whereNull('store_id')->map(fn ($s) => ['id' => (int) $s->id, 'name' => $s->name])->values()->all(),
+        ];
+    }
+
+    /** Teks cakupan shift untuk layar dan email: "Semua studio", "Toko CCM (semua studio)", "Toko CCM: Studio 1, Studio 2", "Studio A". */
+    public function scopeLabel(CashierShift $shift): string
+    {
+        $studios = $this->studiosOf($shift);
+        $storeId = $shift->photobox_store_id ? (int) $shift->photobox_store_id : null;
+        $store = null;
+        if ($storeId !== null) {
+            $name = Schema::hasTable('photobox_stores') ? PhotoboxStore::query()->whereKey($storeId)->value('name') : null;
+            $store = 'Toko '.($name ?? 'dihapus #'.$storeId);
+        }
+        $names = implode(', ', array_column($studios, 'name'));
+
+        return match (true) {
+            $store !== null && $names === '' => $store.' (semua studio)',
+            $store !== null => $store.': '.$names,
+            $names !== '' => $names,
+            default => 'Semua studio',
+        };
     }
 
     /**

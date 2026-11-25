@@ -3,6 +3,8 @@
 namespace App\Http\Controllers\Apps;
 
 use App\Http\Controllers\Controller;
+use App\Models\CashierShift;
+use App\Models\PhotoboxStore;
 use App\Models\PhotoboxStudio;
 use App\Models\PhotoboxTransaction;
 use App\Models\Transaction;
@@ -132,11 +134,13 @@ class PhotoboxTransactionController extends Controller
                 'tx_count' => (int) ($studioTx[$s->id]->count ?? 0),
                 'tx_revenue' => (int) ($studioTx[$s->id]->revenue ?? 0),
                 'name' => $s->name,
+                'store_id' => $s->store_id ? (int) $s->store_id : null,
                 'is_active' => $s->is_active,
                 'token_hint' => $s->token_hint,
                 'last_seen_at' => $s->last_seen_at?->toIso8601String(),
                 'status' => $s->reportSummary(),
             ]),
+            'stores' => PhotoboxStore::query()->withCount('studios')->orderBy('name')->get()->map(fn (PhotoboxStore $st) => ['id' => (int) $st->id, 'name' => $st->name, 'studios_count' => (int) $st->studios_count]),
             'galleryStatusOn' => GalleryStatus::baseUrl() !== null,
             'testCount' => PhotoboxTransaction::query()->where('is_test', true)->when($studioId, fn ($q) => $q->where('studio_id', $studioId))->count(),
             'canManage' => $canManage,
@@ -287,12 +291,60 @@ class PhotoboxTransactionController extends Controller
         return back()->with(['photobox_new_token' => $token, 'photobox_new_token_studio' => $studio->name]);
     }
 
+    /** Ubah nama studio dan/atau pindahkan ke toko lain (store_id kosong = "Tanpa toko"). */
     public function updateStudio(Request $request, PhotoboxStudio $studio): RedirectResponse
     {
-        $data = $request->validate(['name' => ['required', 'string', 'max:100']]);
-        $studio->update(['name' => trim($data['name'])]);
+        $data = $request->validate([
+            'name' => ['sometimes', 'required', 'string', 'max:100'],
+            'store_id' => ['sometimes', 'nullable', 'integer', 'exists:photobox_stores,id'],
+        ]);
 
-        return back()->with('success', 'Nama studio diperbarui.');
+        $update = [];
+        if (array_key_exists('name', $data)) {
+            $update['name'] = trim($data['name']);
+        }
+        if (array_key_exists('store_id', $data)) {
+            $update['store_id'] = $data['store_id'] ?: null;
+        }
+        if ($update === []) {
+            return back();
+        }
+        $studio->update($update);
+
+        return back()->with('success', array_key_exists('store_id', $update) && ! array_key_exists('name', $update) ? 'Toko studio diperbarui.' : 'Studio diperbarui.');
+    }
+
+    public function storeStore(Request $request): RedirectResponse
+    {
+        $data = $request->validate(['name' => ['required', 'string', 'max:100', 'unique:photobox_stores,name']]);
+        PhotoboxStore::create(['name' => trim($data['name'])]);
+
+        return back()->with('success', 'Toko ditambahkan.');
+    }
+
+    public function updateStore(Request $request, PhotoboxStore $store): RedirectResponse
+    {
+        $data = $request->validate(['name' => ['required', 'string', 'max:100', 'unique:photobox_stores,name,'.$store->id]]);
+        $store->update(['name' => trim($data['name'])]);
+
+        return back()->with('success', 'Nama toko diperbarui.');
+    }
+
+    /**
+     * Hapus toko: studionya menjadi "Tanpa toko" (transaksi tidak tersentuh). Ditolak selama ada shift TERBUKA yang memegang toko ini,
+     * supaya shift itu tidak diam-diam kehilangan cakupannya.
+     */
+    public function destroyStore(PhotoboxStore $store): RedirectResponse
+    {
+        $open = CashierShift::query()->where('status', CashierShift::STATUS_OPEN)->where('photobox_store_id', $store->id)->count();
+        if ($open > 0) {
+            return back()->withErrors(['store' => 'Toko ini sedang dipegang '.$open.' shift yang masih terbuka. Tutup shift itu dulu.']);
+        }
+
+        $name = $store->name;
+        DB::transaction(fn () => $store->delete());
+
+        return back()->with('success', 'Toko '.$name.' dihapus. Studionya menjadi "Tanpa toko".');
     }
 
     /**

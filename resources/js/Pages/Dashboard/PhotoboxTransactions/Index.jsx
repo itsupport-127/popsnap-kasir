@@ -192,7 +192,7 @@ function WaContactModal({ t, onClose }) {
     );
 }
 
-export default function Index({ filters, range, transactions, summary, studios, galleryStatusOn, canManage, canEdit, canDelete, testCount = 0, apiUrl, newToken, newTokenStudio }) {
+export default function Index({ filters, range, transactions, summary, studios, stores = [], galleryStatusOn, canManage, canEdit, canDelete, testCount = 0, apiUrl, newToken, newTokenStudio }) {
     const [showStudios, setShowStudios] = useState(!!newToken || studios.length === 0);
     const form = useForm({ name: "" });
     const [editing, setEditing] = useState(null);
@@ -222,6 +222,20 @@ export default function Index({ filters, range, transactions, summary, studios, 
                 router.put(route("photobox-studios.update", s.id), { name: r.value.trim() }, { preserveScroll: true, onSuccess: () => toast.success("Nama studio diperbarui") });
             }
         });
+    };
+    const [newStore, setNewStore] = useState("");
+    const addStore = () => {
+        if (!newStore.trim()) return;
+        router.post(route("photobox-stores.store"), { name: newStore.trim() }, { preserveScroll: true, onSuccess: () => setNewStore("") });
+    };
+    const renameStore = (st) => {
+        Swal.fire({ title: "Ubah nama toko", input: "text", inputValue: st.name, inputAttributes: { maxlength: 100 }, showCancelButton: true, confirmButtonText: "Simpan", cancelButtonText: "Batal",
+            inputValidator: (v) => (!v || !v.trim() ? "Nama toko wajib diisi" : undefined),
+        }).then((r) => { if (r.isConfirmed && r.value.trim() !== st.name) router.put(route("photobox-stores.update", st.id), { name: r.value.trim() }, { preserveScroll: true }); });
+    };
+    const deleteStore = (st) => {
+        Swal.fire({ title: `Hapus toko ${st.name}?`, text: st.studios_count > 0 ? `${st.studios_count} studio di toko ini menjadi "Tanpa toko". Transaksi tidak berubah.` : "Toko ini belum berisi studio.", icon: "warning", showCancelButton: true, confirmButtonText: "Hapus", cancelButtonText: "Batal" })
+            .then((r) => { if (r.isConfirmed) router.delete(route("photobox-stores.destroy", st.id), { preserveScroll: true }); });
     };
     const deleteStudio = (s) => {
         const hasTx = s.tx_count > 0;
@@ -345,6 +359,28 @@ export default function Index({ filters, range, transactions, summary, studios, 
                             <p className="mt-2 text-xs">Isi di app Photobox: Pengaturan &gt; Cloud. URL kasir: <code>{apiUrl}</code></p>
                         </div>
                     )}
+                    <div className="mb-4 rounded-xl border border-slate-100 p-3 dark:border-slate-800" data-testid="store-manager">
+                        <p className="mb-2 text-sm font-semibold text-slate-700 dark:text-slate-200">Toko</p>
+                        <p className="mb-2 text-xs text-slate-500">Kelompokkan studio per toko (mis. POPSNAP, CCM). Shift kasir bisa memegang satu toko beserta semua studionya.</p>
+                        <div className="flex flex-wrap gap-2">
+                            {stores.length === 0 && <span className="text-xs text-slate-500">Belum ada toko.</span>}
+                            {stores.map((st) => (
+                                <span key={st.id} className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-1.5 text-sm dark:border-slate-700">
+                                    {st.name} <span className="text-xs text-slate-500">({st.studios_count} studio)</span>
+                                    {canManage && (<>
+                                        <button type="button" onClick={() => renameStore(st)} className="text-amber-600" title="Ubah nama"><IconPencil size={14} /></button>
+                                        <button type="button" onClick={() => deleteStore(st)} className="text-rose-600" title="Hapus toko"><IconTrash size={14} /></button>
+                                    </>)}
+                                </span>
+                            ))}
+                        </div>
+                        {canManage && (
+                            <form onSubmit={(e) => { e.preventDefault(); addStore(); }} className="mt-2 flex flex-wrap gap-2">
+                                <input value={newStore} onChange={(e) => setNewStore(e.target.value)} placeholder="Nama toko, mis. CCM" className={`${field} w-56`} />
+                                <button type="submit" disabled={!newStore.trim()} className="inline-flex items-center gap-1 rounded-xl border border-primary-500 px-3 text-sm font-semibold text-primary-600 disabled:opacity-50"><IconPlus size={16} /> Tambah toko</button>
+                            </form>
+                        )}
+                    </div>
                     <div className="space-y-2">
                         {studios.length === 0 && <p className="text-sm text-slate-500">Belum ada studio. Tambahkan studio pertama di bawah.</p>}
                         {studios.map((s) => (
@@ -352,6 +388,18 @@ export default function Index({ filters, range, transactions, summary, studios, 
                                 <div>
                                     <p className="font-medium text-slate-800 dark:text-slate-200">{s.name} {!s.is_active && <span className="ml-1 rounded-full bg-slate-200 px-2 py-0.5 text-xs">nonaktif</span>}</p>
                                     <p className="text-xs text-slate-500">Token …{s.token_hint || "----"} · terakhir terhubung: {dt(s.last_seen_at)}</p>
+                                    {stores.length > 0 && (
+                                        canManage ? (
+                                            <p className="text-xs text-slate-500">Toko:{" "}
+                                                <select value={s.store_id ?? ""} onChange={(e) => router.put(route("photobox-studios.update", s.id), { store_id: e.target.value || null }, { preserveScroll: true })} className="rounded-lg border border-slate-200 bg-transparent px-2 py-0.5 text-xs dark:border-slate-700" data-testid={`studio-store-${s.id}`}>
+                                                    <option value="">Tanpa toko</option>
+                                                    {stores.map((st) => <option key={st.id} value={st.id}>{st.name}</option>)}
+                                                </select>
+                                            </p>
+                                        ) : (
+                                            <p className="text-xs text-slate-500">Toko: {stores.find((st) => st.id === s.store_id)?.name || "Tanpa toko"}</p>
+                                        )
+                                    )}
                                     {s.is_active && s.status && (() => { const [dot, txt, label] = BOOTH_STATE[s.status.state] || BOOTH_STATE.unknown; return (
                                         <div className="mt-1" data-testid="booth-status">
                                             <span className={`inline-flex items-center gap-1.5 text-xs font-semibold ${txt}`}><span className={`h-2 w-2 rounded-full ${dot}`} />{label}</span>

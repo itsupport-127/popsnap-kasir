@@ -38,6 +38,7 @@ export default function Index({
     cashiers = [],
     activeShift = null,
     photoboxStudios = [],
+    photoboxStores = null,
     canSendReportEmail = false,
 }) {
     const { auth, errors } = usePage().props;
@@ -45,6 +46,7 @@ export default function Index({
     const [openingCash, setOpeningCash] = useState("");
     const [notes, setNotes] = useState("");
     const [studioIds, setStudioIds] = useState([]);
+    const [storeId, setStoreId] = useState(null);
     const [sendingEmailId, setSendingEmailId] = useState(null);
     const canOpenShift = can("cashier-shifts-open");
 
@@ -106,6 +108,7 @@ export default function Index({
         router.post(route("cashier-shifts.store"), {
             opening_cash: Number(openingCash || 0),
             notes,
+            photobox_store_id: storeId,
             photobox_studio_ids: studioIds,
         });
     };
@@ -178,8 +181,10 @@ export default function Index({
                             </div>
                             <ShiftStudioPicker
                                 studios={photoboxStudios}
-                                value={studioIds}
-                                onChange={setStudioIds}
+                                stores={photoboxStores}
+                                storeId={storeId}
+                                studioIds={studioIds}
+                                onChange={(nextStore, nextStudios) => { setStoreId(nextStore); setStudioIds(nextStudios); }}
                                 className="md:col-span-3"
                             />
                             {errors?.photobox_studio_ids && (

@@ -217,6 +217,7 @@ class TransactionController extends Controller
             'qrisStaticConfig' => $paymentSetting?->qrisStaticConfig() ?? null,
             'shiftSummary' => $this->cashierShiftService->summarizeForDisplay($activeShift),
             'photoboxStudios' => $this->cashierShiftService->studioOptions(),
+            'photoboxStores' => $this->cashierShiftService->storeOptions(),
             'loyaltyTierOptions'  => $this->loyaltyService->tierOptions(),
             'memberRegistrationEnabled' => \App\Models\Setting::getBool('member_registration_pos_enabled', true),
             'generalVouchers'     => Promo::query()

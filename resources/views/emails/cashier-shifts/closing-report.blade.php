@@ -146,10 +146,9 @@
                                     <td style="padding:2px 0;">Kasir</td>
                                     <td style="padding:2px 0;text-align:right;">{{ $shift->user?->name ?? '-' }}</td>
                                 </tr>
-                                @php($studioNames = collect($summary['studios'] ?? [])->pluck('name')->implode(', '))
-                                <tr>
+                                                                <tr>
                                     <td style="padding:2px 0;">Studio Photobox</td>
-                                    <td style="padding:2px 0;text-align:right;">{{ $studioNames !== '' ? $studioNames : 'Semua studio' }}</td>
+                                    <td style="padding:2px 0;text-align:right;">{{ $summary['studio_label'] ?? 'Semua studio' }}</td>
                                 </tr>
                                 <tr>
                                     <td style="padding:2px 0;">Ditutup</td>

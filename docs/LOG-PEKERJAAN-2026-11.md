@@ -131,6 +131,39 @@ Usulan yang belum dikerjakan: setelan `templateChoice`/`singleTemplateId`, `came
   Skrip `ganti-popsnap`/`ganti-papyrus` dirancang tapi `ganti-papyrus` rusak saat ditempel di terminal — **belum diuji**, buat ulang sebagai file.
 - Yang BELUM terbukti di Linux asli: live view & jepret Canon/Nikon lewat gPhoto2, systemd saat boot, `--kiosk-printing` ke CUPS, webcam.
 
+### 2b. Shift per TOKO (di atas shift per studio) — detail & cara migrasi
+
+Kebutuhan: studio dikelompokkan per toko (mis. POPSNAP punya beberapa studio, CCM punya beberapa studio), dan shift bisa
+memegang satu toko lengkap atau hanya sebagian studio di toko itu.
+
+- Migrasi `2026_11_26_000100_create_photobox_stores_table`: tabel `photobox_stores (id, name unik)`, kolom `photobox_studios.store_id`
+  (nullable, FK, `nullOnDelete` → hapus toko membuat studio "tanpa toko"), dan `cashier_shifts.photobox_store_id` (nullable, **tanpa FK**).
+- Tiga tingkat cakupan shift (semakin spesifik semakin menang):
+  | Rank | Cakupan | Data |
+  |---|---|---|
+  | 0 | studio tertentu | ada baris di `cashier_shift_studios` (boleh dengan `photobox_store_id`) |
+  | 1 | satu toko penuh | `photobox_store_id` terisi, tanpa baris studio → semua studio toko itu, **termasuk yang ditambah belakangan** |
+  | 2 | semua studio | tanpa toko, tanpa baris studio (semua shift lama) |
+  Sesama rank: `opened_at` paling awal menang (seri: id terkecil). `MAX_SHIFT_HOURS` 48 tetap berlaku. Shift tertutup memakai angka beku.
+- `photobox_store_id` sengaja tanpa FK; hapus toko **ditolak** selama ada shift terbuka yang memegangnya. Setelah dihapus, shift lama tampil "Toko dihapus #id".
+- Form buka shift: pilih "Semua studio" / satu toko (default semua studio toko itu, bisa centang studio tertentu) / "Studio tanpa toko".
+  Bila belum ada toko, tampilan sama seperti sebelumnya (daftar studio datar). Server menolak studio yang bukan milik toko terpilih.
+- Kelola toko: halaman **Transaksi Photobox** → panel studio → bagian "Toko" (tambah / ubah nama / hapus) + pilihan toko per studio. Izin `photobox-manage`.
+- Label cakupan (`CashierShiftService::scopeLabel`) tampil di detail shift dan email laporan tutup shift.
+- File baru/berubah: `PhotoboxStore`, `PhotoboxStudio`, `CashierShift`, `CashierShiftService` (`openShift`, `storeOptions`, `scopeLabel`, `ownedPhotoboxQuery`),
+  `StoreCashierShiftRequest`, `CashierShiftController`, `TransactionController`, `PhotoboxTransactionController` (store CRUD + `updateStudio`),
+  `routes/web.php`, `ShiftStudioPicker.jsx`, `CashierShifts/Index|Show.jsx`, `Transactions/Index.jsx`, `PhotoboxTransactions/Index.jsx`, email blade.
+
+Langkah pasang: ekstrak zip → `php artisan migrate` → `npm run build` → buat toko di Transaksi Photobox → tetapkan studio ke tokonya → buka shift uji.
+Rollback: `php artisan migrate:rollback --step=1` (hapus tabel toko + dua kolom); shift kembali "semua studio / studio tertentu".
+
+Risiko tambahan: toko tanpa shift pemegang (dan tanpa shift "semua studio") → penjualannya tidak masuk laporan shift mana pun;
+cakupan shift tidak bisa diubah setelah dibuka; memindahkan studio antar toko saat shift terbuka mengubah kepemilikan transaksi yang **belum** ditutup
+(shift tertutup tidak terpengaruh).
+
+Tes: +6 tes toko di `CashierShiftTest` (rank, studio baru, isolasi antar toko, validasi, kelola toko + guard hapus, label). `TransactionsIndexTest`
+disesuaikan (daftar migrasi manual + tabel `cashier_shifts` minimal). Suite penuh: tetap 64 gagal, himpunan sama dengan baseline.
+
 ---
 
 ## 7. Daftar terbuka (belum dikerjakan / menunggu keputusan)
@@ -141,7 +174,7 @@ Usulan yang belum dikerjakan: setelan `templateChoice`/`singleTemplateId`, `came
 4. Printing mode browser (iframe) — ada di sandbox, belum dikirim.
 5. Kamera idle bertingkat; bridge Nikon gPhoto2 (menunggu model).
 6. Pencatatan siapa yang melakukan unggah manual di galeri.
-7. Rilis studio-shift di kasir (butuh commit + migrate) dan uji dua shift/dua booth sungguhan.
+7. Uji shift per toko/studio dengan dua shift dan dua booth sungguhan (migrate + build dulu).
 8. Penawaran lama: sistem nama tamu, akhiran DOKU `X-EXTERNAL-ID`, kertas default "ikut template", detail error S3 di tes bucket galeri,
    bersihkan `PricingRuleTest` dan tes pull-gallery di kasir, "mode seperti stiker" untuk filter, webhook galeri→kasir, batas booth remote v1,
    baris Add Print sebelum marker `addprint`, force-close shift #29 dan #63.

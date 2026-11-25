@@ -14,11 +14,16 @@ class PhotoboxStudio extends Model
         static::deleted(fn (self $m) => \App\Events\PhotoboxUpdated::fire('studio', (int) $m->id));
     }
 
-    protected $fillable = ['name', 'token_hash', 'token_hint', 'is_active', 'last_seen_at', 'sync_report', 'report_at'];
+    protected $fillable = ['name', 'store_id', 'token_hash', 'token_hint', 'is_active', 'last_seen_at', 'sync_report', 'report_at'];
 
     protected $casts = ['is_active' => 'boolean', 'last_seen_at' => 'datetime', 'sync_report' => 'array', 'report_at' => 'datetime'];
 
     protected $hidden = ['token_hash'];
+
+    public function store()
+    {
+        return $this->belongsTo(PhotoboxStore::class, 'store_id');
+    }
 
     public function transactions()
     {

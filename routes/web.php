@@ -127,6 +127,9 @@ Route::group(['prefix' => 'dashboard', 'middleware' => ['auth', 'verified']], fu
     Route::put('photobox-studios/{studio}', [PhotoboxTransactionController::class, 'updateStudio'])->middleware('permission:photobox-manage')->name('photobox-studios.update');
     Route::delete('photobox-studios/{studio}', [PhotoboxTransactionController::class, 'destroyStudio'])->middleware('permission:photobox-manage')->name('photobox-studios.destroy');
     Route::post('photobox-studios/{studio}/toggle', [PhotoboxTransactionController::class, 'toggleStudio'])->middleware('permission:photobox-manage')->name('photobox-studios.toggle');
+    Route::post('photobox-stores', [PhotoboxTransactionController::class, 'storeStore'])->middleware('permission:photobox-manage')->name('photobox-stores.store');
+    Route::put('photobox-stores/{store}', [PhotoboxTransactionController::class, 'updateStore'])->middleware('permission:photobox-manage')->name('photobox-stores.update');
+    Route::delete('photobox-stores/{store}', [PhotoboxTransactionController::class, 'destroyStore'])->middleware('permission:photobox-manage')->name('photobox-stores.destroy');
     Route::get('audit-logs', [AuditLogController::class, 'index'])->middleware('permission:audit-logs-access')->name('audit-logs.index');
     Route::get('audit-logs/{auditLog}', [AuditLogController::class, 'show'])->middleware('permission:audit-logs-access')->name('audit-logs.show');
     Route::get('cashier-shifts', [CashierShiftController::class, 'index'])->middleware('permission:cashier-shifts-access')->name('cashier-shifts.index');

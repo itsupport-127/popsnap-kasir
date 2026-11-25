@@ -33,6 +33,7 @@ class CashierShift extends Model
         'transactions_count',
         'sales_returns_count',
         'cash_difference',
+        'photobox_store_id',
         'notes',
         'close_notes',
         'expense_total',

@@ -10,7 +10,8 @@ class TransactionsIndexTest extends TestCase
 {
     public function test_index_page_builds_with_and_without_gallery_rows(): void
     {
-        foreach (['2026_10_22_000100_create_photobox_tables','2026_10_26_000100_add_soft_delete_and_edit_to_photobox_transactions','2026_10_27_000100_add_gallery_url_to_photobox_transactions','2026_11_03_000100_add_sync_report_to_photobox_studios','2026_11_09_000200_add_is_test_to_photobox_transactions_table'] as $m) {
+        Schema::create('cashier_shifts', fn ($t) => $t->id()); // migrasi toko menambah kolom ke tabel ini
+        foreach (['2026_10_22_000100_create_photobox_tables','2026_10_26_000100_add_soft_delete_and_edit_to_photobox_transactions','2026_10_27_000100_add_gallery_url_to_photobox_transactions','2026_11_03_000100_add_sync_report_to_photobox_studios','2026_11_09_000200_add_is_test_to_photobox_transactions_table','2026_11_26_000100_create_photobox_stores_table'] as $m) {
             $this->artisan('migrate', ['--path' => "database/migrations/$m.php", '--force' => true]);
         }
         Schema::create('customers', fn ($t) => [$t->id(), $t->string('name')->nullable(), $t->string('no_telp')->nullable(), $t->timestamps()]);

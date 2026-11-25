@@ -57,6 +57,7 @@ class CashierShiftController extends Controller
             'cashiers' => $cashiers,
             'activeShift' => $activeShift ? $this->transformShift($activeShift) : null,
             'photoboxStudios' => $this->cashierShiftService->studioOptions(),
+            'photoboxStores' => $this->cashierShiftService->storeOptions(),
             'canForceClose' => $request->user()->isSuperAdmin() || $request->user()->can('cashier-shifts-force-close'),
             'canSendReportEmail' => $request->user()->isSuperAdmin() || $request->user()->can('cashier-shifts-close'),
         ]);
@@ -86,6 +87,7 @@ class CashierShiftController extends Controller
             openingCash: (int) $request->validated('opening_cash'),
             notes: $request->validated('notes'),
             studioIds: $request->validated('photobox_studio_ids') ?? [],
+            storeId: $request->validated('photobox_store_id') ? (int) $request->validated('photobox_store_id') : null,
         );
 
         $this->auditLogService->log(
@@ -260,6 +262,7 @@ class CashierShiftController extends Controller
             'photobox_transactions_count' => $photobox['photobox_transactions_count'],
             // studio yang dipegang shift; kosong = semua studio
             'photobox_studios' => $this->cashierShiftService->studiosOf($shift),
+            'photobox_scope_label' => $this->cashierShiftService->scopeLabel($shift),
             'cash_refund_total' => $shift->isOpen() ? $summary['cash_refund_total'] : (int) $shift->cash_refund_total,
             'non_cash_refund_total' => $shift->isOpen() ? $summary['non_cash_refund_total'] : (int) $shift->non_cash_refund_total,
             'transactions_count' => $shift->isOpen() ? $summary['transactions_count'] : (int) $shift->transactions_count,
@@ -302,6 +305,7 @@ class CashierShiftController extends Controller
             'transactions_count' => (int) ($shift->transactions_count ?? 0),
             'sales_returns_count' => (int) ($shift->sales_returns_count ?? 0),
             'photobox_studio_ids' => $shift->studioIds(),
+            'photobox_store_id' => $shift->photobox_store_id ? (int) $shift->photobox_store_id : null,
         ];
     }
 }
