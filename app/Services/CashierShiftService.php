@@ -4,6 +4,7 @@ namespace App\Services;
 
 use App\Mail\CashierShiftClosingReportMail;
 use App\Models\CashierShift;
+use App\Models\PhotoboxStudio;
 use App\Models\PhotoboxTransaction;
 use App\Models\Product;
 use App\Models\SalesReturn;
@@ -51,7 +52,7 @@ class CashierShiftService
         return $shift;
     }
 
-    public function openShift(User $cashier, User $actor, int $openingCash, ?string $notes = null): CashierShift
+    public function openShift(User $cashier, User $actor, int $openingCash, ?string $notes = null, array $studioIds = []): CashierShift
     {
         $existing = CashierShift::query()
             ->open()
@@ -64,15 +65,66 @@ class CashierShiftService
             ]);
         }
 
-        return CashierShift::create([
-            'user_id' => $cashier->id,
-            'opened_by' => $actor->id,
-            'opened_at' => now(),
-            'opening_cash' => $openingCash,
-            'expected_cash' => $openingCash,
-            'notes' => $notes,
-            'status' => CashierShift::STATUS_OPEN,
-        ]);
+        $studioIds = collect($studioIds)->map(fn ($id) => (int) $id)->filter(fn ($id) => $id > 0)->unique()->values()->all();
+
+        return DB::transaction(function () use ($cashier, $actor, $openingCash, $notes, $studioIds) {
+            $shift = CashierShift::create([
+                'user_id' => $cashier->id,
+                'opened_by' => $actor->id,
+                'opened_at' => now(),
+                'opening_cash' => $openingCash,
+                'expected_cash' => $openingCash,
+                'notes' => $notes,
+                'status' => CashierShift::STATUS_OPEN,
+            ]);
+
+            // Kosong = semua studio. Diisi = transaksi photobox hanya dari studio-studio ini yang dikaitkan ke shift ini.
+            if ($studioIds !== [] && Schema::hasTable('cashier_shift_studios')) {
+                DB::table('cashier_shift_studios')->insert(array_map(fn ($id) => [
+                    'cashier_shift_id' => $shift->id,
+                    'photobox_studio_id' => $id,
+                    'created_at' => now(),
+                    'updated_at' => now(),
+                ], $studioIds));
+            }
+
+            return $shift;
+        });
+    }
+
+    /**
+     * Studio photobox yang bisa dipilih saat membuka shift.
+     *
+     * @return array<int, array{id: int, name: string}>
+     */
+    public function studioOptions(): array
+    {
+        if (! Schema::hasTable('photobox_studios')) {
+            return [];
+        }
+
+        return PhotoboxStudio::query()->orderBy('name')->get(['id', 'name'])
+            ->map(fn ($s) => ['id' => (int) $s->id, 'name' => $s->name])->all();
+    }
+
+    /**
+     * Studio yang dipegang shift, untuk ditampilkan. Kosong = semua studio.
+     * Studio yang sudah dihapus tetap muncul ("Studio dihapus #id") supaya jelas shift ini terbatas.
+     *
+     * @return array<int, array{id: int, name: string}>
+     */
+    public function studiosOf(CashierShift $shift): array
+    {
+        $ids = $shift->studioIds();
+        if ($ids === []) {
+            return [];
+        }
+
+        $names = Schema::hasTable('photobox_studios')
+            ? PhotoboxStudio::query()->whereIn('id', $ids)->pluck('name', 'id')
+            : collect();
+
+        return collect($ids)->map(fn ($id) => ['id' => $id, 'name' => $names[$id] ?? 'Studio dihapus #'.$id])->all();
     }
 
     public function calculateSummary(CashierShift $shift): array
@@ -154,27 +206,64 @@ class CashierShiftService
 
     /**
      * Transaksi photobox yang LUNAS, asli (bukan TEST), dan milik shift ini.
-     * Photobox tidak punya kasir, jadi dikaitkan lewat waktu bayar. Kalau beberapa shift sedang buka bersamaan,
-     * satu transaksi hanya dihitung di SATU shift: yang dibuka paling awal (seri: id terkecil), supaya tidak dobel.
+     * Photobox tidak punya kasir, jadi dikaitkan lewat waktu bayar DAN studio.
+     *
+     * Aturan pemilik (tiap transaksi punya tepat satu pemilik):
+     *  1. Shift hanya bisa memiliki transaksi dari studio yang dipegangnya. Shift tanpa studio (cashier_shift_studios
+     *     kosong, termasuk semua shift lama) memegang SEMUA studio.
+     *  2. Shift yang menyebut studio transaksi itu secara eksplisit MENANG atas shift "semua studio".
+     *  3. Antar shift setingkat, yang dibuka paling awal menang (seri: id terkecil), supaya tidak dobel.
+     * Shift lupa-tutup tidak ikut mengklaim di luar batas durasi wajar (MAX_SHIFT_HOURS).
      */
     private function ownedPhotoboxQuery(CashierShift $shift)
     {
         [$start, $end] = $this->shiftWindow($shift);
+        $studioIds = $shift->studioIds();
+        $explicit = $studioIds !== [];
+        $hasPivot = Schema::hasTable('cashier_shift_studios');
 
-        return PhotoboxTransaction::query()
+        $query = PhotoboxTransaction::query()
             ->real()
             ->where('status', 'paid')
-            ->whereBetween('paid_at', [$start, $end])
-            ->whereNotExists(function ($q) use ($shift, $start) {
-                $q->select(DB::raw(1))->from('cashier_shifts as other')
-                    ->where('other.id', '!=', $shift->id)
-                    ->whereColumn('other.opened_at', '<=', 'photobox_transactions.paid_at')
-                    // shift lain hanya "mengklaim" transaksi dalam batas durasi wajar sejak dibuka (shift lupa-tutup tidak ikut)
-                    ->where('other.opened_at', '>=', $start->copy()->subHours(self::MAX_SHIFT_HOURS))
-                    ->where(fn ($w) => $w->whereNull('other.closed_at')->orWhereColumn('other.closed_at', '>=', 'photobox_transactions.paid_at'))
-                    ->where(fn ($w) => $w->where('other.opened_at', '<', $shift->opened_at)
-                        ->orWhere(fn ($x) => $x->where('other.opened_at', $shift->opened_at)->where('other.id', '<', $shift->id)));
-            });
+            ->whereBetween('paid_at', [$start, $end]);
+
+        if ($explicit) {
+            $query->whereIn('studio_id', $studioIds);
+        }
+
+        return $query->whereNotExists(function ($q) use ($shift, $start, $explicit, $hasPivot) {
+            $q->select(DB::raw(1))->from('cashier_shifts as other')
+                ->where('other.id', '!=', $shift->id)
+                ->whereColumn('other.opened_at', '<=', 'photobox_transactions.paid_at')
+                // shift lain hanya "mengklaim" transaksi dalam batas durasi wajar sejak dibuka (shift lupa-tutup tidak ikut)
+                ->where('other.opened_at', '>=', $start->copy()->subHours(self::MAX_SHIFT_HOURS))
+                ->where(fn ($w) => $w->whereNull('other.closed_at')->orWhereColumn('other.closed_at', '>=', 'photobox_transactions.paid_at'));
+
+            $earlier = fn ($w) => $w->where('other.opened_at', '<', $shift->opened_at)
+                ->orWhere(fn ($x) => $x->where('other.opened_at', $shift->opened_at)->where('other.id', '<', $shift->id));
+
+            if (! $hasPivot) {
+                $q->where($earlier);
+
+                return;
+            }
+
+            // shift lain menyebut studio transaksi ini secara eksplisit
+            $exact = fn ($w) => $w->whereExists(fn ($e) => $e->select(DB::raw(1))->from('cashier_shift_studios as css')
+                ->whereColumn('css.cashier_shift_id', 'other.id')
+                ->whereColumn('css.photobox_studio_id', 'photobox_transactions.studio_id'));
+            // shift lain memegang semua studio (tanpa baris studio sama sekali)
+            $generic = fn ($w) => $w->whereNotExists(fn ($e) => $e->select(DB::raw(1))->from('cashier_shift_studios as css2')
+                ->whereColumn('css2.cashier_shift_id', 'other.id'));
+
+            if ($explicit) {
+                // Saya eksplisit: hanya shift eksplisit yang lebih awal yang bisa merebut.
+                $q->where($exact)->where($earlier);
+            } else {
+                // Saya "semua studio": shift eksplisit mana pun merebut; sesama "semua studio" yang lebih awal juga.
+                $q->where(fn ($w) => $w->where($exact)->orWhere(fn ($x) => $x->where($generic)->where($earlier)));
+            }
+        });
     }
 
     /**

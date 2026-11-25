@@ -111,4 +111,18 @@ class CashierShift extends Model
     {
         return $this->report_email_sent_at !== null;
     }
+
+    /** Id studio photobox yang dipegang shift ini. Kosong = semua studio. */
+    public function studioIds(): array
+    {
+        if (! \Illuminate\Support\Facades\Schema::hasTable('cashier_shift_studios')) {
+            return [];
+        }
+
+        return \Illuminate\Support\Facades\DB::table('cashier_shift_studios')
+            ->where('cashier_shift_id', $this->id)
+            ->pluck('photobox_studio_id')
+            ->map(fn ($id) => (int) $id)
+            ->all();
+    }
 }

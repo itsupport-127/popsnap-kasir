@@ -308,6 +308,113 @@ class CashierShiftTest extends TestCase
         $this->assertSame(0, $service->calculatePhotoboxRecap($shiftB)['sessions']);
     }
 
+    private function studioShift(User $user, $openedAt, array $studioIds = []): CashierShift
+    {
+        $shift = CashierShift::create([
+            'user_id' => $user->id, 'opened_by' => $user->id, 'opened_at' => $openedAt,
+            'opening_cash' => 0, 'expected_cash' => 0, 'status' => CashierShift::STATUS_OPEN,
+        ]);
+        foreach ($studioIds as $id) {
+            \DB::table('cashier_shift_studios')->insert([
+                'cashier_shift_id' => $shift->id, 'photobox_studio_id' => $id, 'created_at' => now(), 'updated_at' => now(),
+            ]);
+        }
+
+        return $shift;
+    }
+
+    private function studioWithSale(string $name, string $orderNo, int $amount): PhotoboxStudio
+    {
+        $studio = new PhotoboxStudio(['name' => $name, 'is_active' => true, 'token_hash' => bin2hex(random_bytes(32))]);
+        $studio->save();
+        PhotoboxTransaction::create([
+            'order_no' => $orderNo, 'studio_id' => $studio->id, 'template_name' => 'T', 'mode' => 'photo',
+            'method' => 'qris', 'amount' => $amount, 'status' => 'paid', 'paid_at' => now()->subHour(),
+        ]);
+
+        return $studio;
+    }
+
+    public function test_shifts_bound_to_different_studios_each_get_only_their_own_photobox_sales(): void
+    {
+        $a = $this->createUserWithPermissions(['cashier-shifts-access']);
+        $b = $this->createUserWithPermissions(['cashier-shifts-access']);
+        $s1 = $this->studioWithSale('Studio 1', 'PB-S-0001', 35000);
+        $s2 = $this->studioWithSale('Studio 2', 'PB-S-0002', 50000);
+        $shiftA = $this->studioShift($a, now()->subHours(3), [$s1->id]); // dibuka lebih awal, hanya studio 1
+        $shiftB = $this->studioShift($b, now()->subHours(2), [$s2->id]); // tumpang tindih, hanya studio 2
+
+        $service = app(\App\Services\CashierShiftService::class);
+        $this->assertSame(35000, $service->calculatePhotoboxTotals($shiftA)['photobox_sales_total']);
+        $this->assertSame(50000, $service->calculatePhotoboxTotals($shiftB)['photobox_sales_total']);
+        $this->assertSame(1, $service->calculatePhotoboxRecap($shiftA)['sessions']);
+        $this->assertSame(1, $service->calculatePhotoboxRecap($shiftB)['sessions']);
+    }
+
+    public function test_explicit_studio_shift_wins_over_an_earlier_all_studios_shift(): void
+    {
+        $a = $this->createUserWithPermissions(['cashier-shifts-access']);
+        $b = $this->createUserWithPermissions(['cashier-shifts-access']);
+        $s1 = $this->studioWithSale('Studio 1', 'PB-S-0003', 35000);
+        $this->studioWithSale('Studio 2', 'PB-S-0004', 50000);
+        $general = $this->studioShift($a, now()->subHours(3));                 // semua studio, paling awal
+        $explicit = $this->studioShift($b, now()->subHours(2), [$s1->id]);     // studio 1 saja, belakangan
+
+        $service = app(\App\Services\CashierShiftService::class);
+        $this->assertSame(35000, $service->calculatePhotoboxTotals($explicit)['photobox_sales_total']); // transaksi studio 1 milik shift eksplisit
+        $this->assertSame(50000, $service->calculatePhotoboxTotals($general)['photobox_sales_total']);  // sisanya (studio 2) milik shift umum
+    }
+
+    public function test_same_studio_overlap_still_goes_to_the_earliest_shift_only(): void
+    {
+        $a = $this->createUserWithPermissions(['cashier-shifts-access']);
+        $b = $this->createUserWithPermissions(['cashier-shifts-access']);
+        $s1 = $this->studioWithSale('Studio 1', 'PB-S-0005', 35000);
+        $first = $this->studioShift($a, now()->subHours(3), [$s1->id]);
+        $second = $this->studioShift($b, now()->subHours(2), [$s1->id]);
+
+        $service = app(\App\Services\CashierShiftService::class);
+        $this->assertSame(35000, $service->calculatePhotoboxTotals($first)['photobox_sales_total']);
+        $this->assertSame(0, $service->calculatePhotoboxTotals($second)['photobox_sales_total']);
+    }
+
+    public function test_deleting_a_studio_does_not_widen_a_restricted_shift_to_all_studios(): void
+    {
+        $a = $this->createUserWithPermissions(['cashier-shifts-access']);
+        $gone = $this->studioWithSale('Studio Hilang', 'PB-S-0006', 10000);
+        $other = $this->studioWithSale('Studio Lain', 'PB-S-0007', 50000);
+        $shift = $this->studioShift($a, now()->subHours(3), [$gone->id]);
+        $gone->delete();
+
+        $this->assertSame([$gone->id], $shift->studioIds());
+        $this->assertSame('Studio dihapus #'.$gone->id, app(\App\Services\CashierShiftService::class)->studiosOf($shift)[0]['name']);
+        $this->assertSame(0, app(\App\Services\CashierShiftService::class)->calculatePhotoboxTotals($shift)['photobox_sales_total']);
+    }
+
+    public function test_open_shift_saves_studios_and_rejects_unknown_studio(): void
+    {
+        $cashier = $this->createUserWithPermissions(['cashier-shifts-access', 'cashier-shifts-open']);
+        $studio = new PhotoboxStudio(['name' => 'Studio X', 'is_active' => true, 'token_hash' => bin2hex(random_bytes(32))]);
+        $studio->save();
+
+        $this->actingAs($cashier)->post(route('cashier-shifts.store'), ['opening_cash' => 0, 'photobox_studio_ids' => [999999]])
+            ->assertSessionHasErrors('photobox_studio_ids.0');
+        $this->assertSame(0, CashierShift::count());
+
+        $this->actingAs($cashier)->post(route('cashier-shifts.store'), ['opening_cash' => 0, 'photobox_studio_ids' => [$studio->id, $studio->id]])
+            ->assertSessionHasErrors('photobox_studio_ids.1'); // duplikat ditolak
+
+        $this->actingAs($cashier)->post(route('cashier-shifts.store'), ['opening_cash' => 0, 'photobox_studio_ids' => [$studio->id]]);
+        $this->assertSame([$studio->id], CashierShift::first()->studioIds());
+    }
+
+    public function test_open_shift_without_studios_keeps_old_all_studios_behaviour(): void
+    {
+        $cashier = $this->createUserWithPermissions(['cashier-shifts-access', 'cashier-shifts-open']);
+        $this->actingAs($cashier)->post(route('cashier-shifts.store'), ['opening_cash' => 0]);
+        $this->assertSame([], CashierShift::first()->studioIds());
+    }
+
     public function test_forgotten_open_shift_from_months_ago_does_not_swallow_photobox_sales(): void
     {
         $old = $this->createUserWithPermissions(['cashier-shifts-access']);

@@ -84,6 +84,7 @@ class CashierShiftClosingReportMail extends Mailable
             'photobox' => $photoboxTotal,
             'photobox_count' => $photobox['photobox_transactions_count'],
             'photobox_recap' => $service->calculatePhotoboxRecap($shift),
+            'studios' => $service->studiosOf($shift),
             'store_total' => $storeTotal,
             'total' => $total,
             'expense' => $expense,

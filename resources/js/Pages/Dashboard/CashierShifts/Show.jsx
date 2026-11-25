@@ -498,6 +498,14 @@ export default function Show({
                                 <p className="mt-2 text-sm text-slate-900 dark:text-white">{cashierShift.user?.name || "-"}</p>
                             </div>
                             <div>
+                                <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Studio Photobox</p>
+                                <p className="mt-2 text-sm text-slate-900 dark:text-white">
+                                    {cashierShift.photobox_studios?.length
+                                        ? cashierShift.photobox_studios.map((studio) => studio.name).join(", ")
+                                        : "Semua studio"}
+                                </p>
+                            </div>
+                            <div>
                                 <p className="text-xs font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400">Dibuka Oleh</p>
                                 <p className="mt-2 text-sm text-slate-900 dark:text-white">{cashierShift.opened_by?.name || "-"}</p>
                             </div>

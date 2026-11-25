@@ -5,6 +5,7 @@ import toast from "react-hot-toast";
 import DashboardLayout from "@/Layouts/DashboardLayout";
 import Table from "@/Components/Dashboard/Table";
 import Pagination from "@/Components/Dashboard/Pagination";
+import ShiftStudioPicker from "@/Components/Dashboard/ShiftStudioPicker";
 import { useAuthorization } from "@/Utils/authorization";
 import {
     IconCashBanknote,
@@ -36,12 +37,14 @@ export default function Index({
     filters,
     cashiers = [],
     activeShift = null,
+    photoboxStudios = [],
     canSendReportEmail = false,
 }) {
     const { auth, errors } = usePage().props;
     const { can } = useAuthorization();
     const [openingCash, setOpeningCash] = useState("");
     const [notes, setNotes] = useState("");
+    const [studioIds, setStudioIds] = useState([]);
     const [sendingEmailId, setSendingEmailId] = useState(null);
     const canOpenShift = can("cashier-shifts-open");
 
@@ -103,6 +106,7 @@ export default function Index({
         router.post(route("cashier-shifts.store"), {
             opening_cash: Number(openingCash || 0),
             notes,
+            photobox_studio_ids: studioIds,
         });
     };
 
@@ -172,6 +176,15 @@ export default function Index({
                                     placeholder="Opsional"
                                 />
                             </div>
+                            <ShiftStudioPicker
+                                studios={photoboxStudios}
+                                value={studioIds}
+                                onChange={setStudioIds}
+                                className="md:col-span-3"
+                            />
+                            {errors?.photobox_studio_ids && (
+                                <p className="text-xs text-rose-500 md:col-span-3">{errors.photobox_studio_ids}</p>
+                            )}
                             <div className="md:col-span-3">
                                 <button
                                     type="submit"
