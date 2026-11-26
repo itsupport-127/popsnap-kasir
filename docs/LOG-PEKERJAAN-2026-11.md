@@ -75,8 +75,18 @@ Solusi: shift boleh memegang satu atau lebih studio.
 | 4 | Halaman Transaksi Photobox kosong setelah tutup shift tanpa penjelasan. | Banner menjelaskan; rekap ada di laporan shift. |
 | 5 | Role `cashier` masih punya `photobox-edit` & `photobox-delete`: kasir bisa menghapus/mengubah transaksi di cakupannya (mempengaruhi pendapatan). | **Belum diubah** (keputusan kebijakan). Saran: cabut dari role kasir lewat menu Role. |
 | 6 | Email laporan shift dikirim ke daftar penerima yang sama untuk semua toko. | **Belum diubah.** Saran: penerima per toko. |
-| 7 | Shift lupa ditutup > 48 jam: transaksi photobox setelahnya tidak masuk shift itu. | Dicatat; pertimbangkan pengingat / tutup otomatis. |
+| 7 | Shift lupa ditutup > 48 jam: transaksi photobox setelahnya tidak masuk shift itu. | Diperbaiki: spanduk di layar kasir mulai 20 jam, email pengingat 24 & 40 jam (ke kasir + penerima laporan), tutup otomatis 48 jam. Lihat bawah. |
 | 8 | Shift terbuka sehari semalam (#174) tetap benar hitungannya (diverifikasi manual terhadap dump). | OK |
+
+**Riwayat & rekap kasir (perubahan 26 Nov):** kasir melihat transaksi photobox dari SEMUA shift miliknya (aktif maupun sudah ditutup, 120 hari terakhir),
+tiap shift hanya untuk toko/studio dan rentang waktunya (`CashierShiftService::photoboxScopeFor/applyPhotoboxScope`). Laporan dan histori shift tetap bisa dibuka setelah tutup.
+
+**Shift lupa tutup:** perintah `php artisan cashier-shifts:close-forgotten` (dijadwalkan tiap jam di `routes/console.php`; butuh scheduler berjalan, sama seperti `photobox:pull-gallery`).
+- 20 jam: spanduk kuning di semua halaman kasir ("Shift Anda sudah terbuka N jam… tutup sebelum <waktu>").
+- 24 jam dan 40 jam: email pengingat sekali per tahap (dedupe lewat cache 5 hari) ke email kasir (bila valid) + penerima laporan shift.
+- 48 jam: tutup otomatis, status `force_closed`, kas fisik & selisih DIKOSONGKAN (tidak dikarang), `closed_by` kosong, catatan "Ditutup otomatis…", tercatat di audit log (`cashier_shift.auto_closed`).
+  Email laporan tidak dikirim otomatis. Kas fisik diisi lewat "Koreksi kas fisik" di halaman shift, lalu kirim email manual bila perlu.
+- Uji manual: `php artisan cashier-shifts:close-forgotten --dry-run`.
 
 Langkah pasang: ekstrak zip → `php artisan migrate` → `npm run build` → buka satu shift uji dengan studio terpilih.
 Rollback: `php artisan migrate:rollback --step=1` menghapus tabel pivot; shift kembali berperilaku "semua studio".

@@ -898,6 +898,72 @@ class CashierShiftTest extends TestCase
         $this->assertSame('Toko POPSNAP (semua studio)', app(\App\Services\CashierShiftService::class)->summarizeForDisplay($shift)['photobox_scope_label']);
     }
 
+    public function test_cashier_keeps_seeing_closed_shift_history_but_only_inside_each_shift_window_and_scope(): void
+    {
+        Permission::firstOrCreate(['name' => 'photobox-access', 'guard_name' => 'web']);
+        $cashier = $this->createUserWithPermissions(['cashier-shifts-access', 'photobox-access']);
+        $store = \App\Models\PhotoboxStore::create(['name' => 'POPSNAP']);
+        $other = \App\Models\PhotoboxStore::create(['name' => 'CCM']);
+        $studio = $this->inStore($this->studioWithSale('P1', 'PB-V-0030', 10000), $store);   // paid 1 jam lalu
+        $ccm = $this->inStore($this->studioWithSale('C1', 'PB-V-0031', 20000), $other);      // toko lain
+        $mk = fn (string $no, $paid) => PhotoboxTransaction::create(['order_no' => $no, 'studio_id' => $studio->id, 'template_name' => 'T', 'mode' => 'photo', 'method' => 'qris', 'amount' => 5000, 'status' => 'paid', 'paid_at' => $paid]);
+        $mk('PB-V-0032', now()->subHours(10));  // sebelum shift dibuka
+        $mk('PB-V-0033', now()->addHours(2));   // sesudah shift ditutup
+
+        $shift = $this->storeShift($cashier, now()->subHours(3), $store->id);
+        $shift->update(['status' => CashierShift::STATUS_CLOSED, 'closed_at' => now()]); // shift SUDAH ditutup
+
+        $props = $this->photoboxIndexProps($cashier, ['period' => 'all']);
+        $this->assertSame(['PB-V-0030'], $props['transactions']->pluck('order_no')->all()); // riwayat tetap ada, hanya jendela & toko shift itu
+        $this->assertTrue($props['scope']['has_shift']);
+        $this->assertFalse($props['scope']['active']);
+        $this->assertSame(10000, $props['summary']['revenue']);
+    }
+
+    public function test_forgotten_shift_gets_reminder_once_per_stage_then_auto_closes_without_inventing_cash(): void
+    {
+        \Illuminate\Support\Facades\Mail::fake();
+        \Illuminate\Support\Facades\Cache::flush();
+        config(['cashier_shift_report.recipients' => ['owner@example.com']]);
+        $cashier = $this->createUserWithPermissions(['cashier-shifts-access']);
+        $fresh = $this->studioShift($cashier, now()->subHours(5));
+        $c2 = $this->createUserWithPermissions(['cashier-shifts-access']);
+        $mid = $this->studioShift($c2, now()->subHours(26));
+        $c3 = $this->createUserWithPermissions(['cashier-shifts-access']);
+        $old = $this->studioShift($c3, now()->subHours(50));
+        $old->update(['opening_cash' => 100000]);
+
+        $this->artisan('cashier-shifts:close-forgotten')->assertSuccessful();
+        $this->assertSame(CashierShift::STATUS_OPEN, $fresh->fresh()->status);   // 5 jam: dibiarkan
+        $this->assertSame(CashierShift::STATUS_OPEN, $mid->fresh()->status);     // 26 jam: hanya diingatkan
+        $this->assertSame(CashierShift::STATUS_FORCE_CLOSED, $old->fresh()->status); // 50 jam: ditutup otomatis
+        $o = $old->fresh();
+        $this->assertNull($o->actual_cash);
+        $this->assertNull($o->cash_difference);
+        $this->assertNull($o->closed_by);
+        $this->assertSame(100000, (int) $o->expected_cash);
+        $this->assertStringContainsString('Ditutup otomatis', $o->close_notes);
+        $this->assertTrue(\Illuminate\Support\Facades\Cache::has("shift-forgotten-remind:{$mid->id}:24")); // pengingat 24 jam terkirim (penanda dedupe)
+        $this->assertFalse(\Illuminate\Support\Facades\Cache::has("shift-forgotten-remind:{$fresh->id}:24"));
+        $this->assertFalse(\Illuminate\Support\Facades\Cache::has("shift-forgotten-remind:{$mid->id}:40"));
+        $this->assertDatabaseHas('audit_logs', ['event' => 'cashier_shift.auto_closed']);
+
+        $this->artisan('cashier-shifts:close-forgotten')->assertSuccessful();    // jalan lagi: pengingat tidak dobel
+        $this->assertSame(CashierShift::STATUS_OPEN, $mid->fresh()->status);
+    }
+
+    public function test_active_shift_display_flags_forgotten_shift_for_banner(): void
+    {
+        $cashier = $this->createUserWithPermissions(['cashier-shifts-access']);
+        $svc = app(\App\Services\CashierShiftService::class);
+        $short = $svc->summarizeForDisplay($this->studioShift($cashier, now()->subHours(5)));
+        $this->assertFalse($short['forgotten_warning']);
+        $c2 = $this->createUserWithPermissions(['cashier-shifts-access']);
+        $long = $svc->summarizeForDisplay($this->studioShift($c2, now()->subHours(30)));
+        $this->assertTrue($long['forgotten_warning']);
+        $this->assertGreaterThanOrEqual(30, $long['hours_open']);
+    }
+
     private function createUserWithPermissions(array $permissions): User
     {
         $user = User::factory()->create();

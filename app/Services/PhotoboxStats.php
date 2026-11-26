@@ -14,14 +14,15 @@ use Illuminate\Support\Facades\DB;
  */
 class PhotoboxStats
 {
-    public static function summary(Carbon $start, Carbon $end, ?int $studioId = null, ?array $studioIds = null): array
+    public static function summary(Carbon $start, Carbon $end, ?int $studioId = null, ?array $studioIds = null, ?\Closure $scope = null): array
     {
         $base = fn () => PhotoboxTransaction::query()
             ->real()
             ->where('status', 'paid')
             ->whereBetween('paid_at', [$start, $end])
             ->when($studioId, fn ($q) => $q->where('studio_id', $studioId))
-            ->when($studioIds !== null, fn ($q) => $q->whereIn('studio_id', $studioIds));
+            ->when($studioIds !== null, fn ($q) => $q->whereIn('studio_id', $studioIds))
+            ->when($scope, fn ($q) => $scope($q));
 
         $byStudio = $base()
             ->join('photobox_studios', 'photobox_studios.id', '=', 'photobox_transactions.studio_id')

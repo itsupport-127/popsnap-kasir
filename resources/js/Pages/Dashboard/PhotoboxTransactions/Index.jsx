@@ -464,8 +464,8 @@ export default function Index({ filters, range, transactions, summary, studios, 
             {scope?.restricted && (
                 <div className="mb-4 rounded-2xl border border-sky-200 bg-sky-50 p-3 text-sm text-sky-900 dark:border-sky-900 dark:bg-sky-950/30 dark:text-sky-200" data-testid="scope-banner">
                     {scope.has_shift
-                        ? <>Menampilkan transaksi sesuai shift Anda: <b>{scope.label}</b>, sejak shift dibuka ({dt(scope.since)}). Transaksi toko/studio lain dan sebelum shift dibuka hanya terlihat oleh admin. Setelah shift ditutup, daftar ini kosong; lihat rekapnya di laporan shift.</>
-                        : <>Anda belum punya shift aktif, jadi tidak ada transaksi photobox yang ditampilkan. Buka shift dan pilih toko/studio untuk melihatnya.</>}
+                        ? <>Menampilkan transaksi dari <b>shift Anda</b>{scope.active && scope.label ? <> (shift aktif: <b>{scope.label}</b>)</> : <> (tidak ada shift yang sedang terbuka)</>}, termasuk shift yang sudah ditutup, untuk rekap. Transaksi di luar toko/studio dan jam shift Anda hanya terlihat oleh admin. Pilih periode “Semua” atau “Pilih tanggal” untuk melihat hari sebelumnya.</>
+                        : <>Anda belum pernah membuka shift, jadi belum ada transaksi photobox yang ditampilkan. Buka shift dan pilih toko/studio, maka transaksinya muncul di sini.</>}
                 </div>
             )}
 

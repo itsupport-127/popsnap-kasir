@@ -41,9 +41,8 @@ class PhotoboxTransactionController extends Controller
         // Hak lihat: admin/superadmin semua toko & studio; kasir hanya cakupan SHIFT AKTIF-nya (sejak shift dibuka).
         $scope = $this->scopeFor($request);
         $scopeIds = $scope['studio_ids'] ?? null; // null = tanpa batas studio
-        if ($scope && $scope['since'] && $start->lt($scope['since'])) {
-            $start = $scope['since']->copy();
-        }
+        $svc = app(CashierShiftService::class);
+        $applyScope = fn ($q) => $svc->applyPhotoboxScope($q, $scope);
         $allowedIds = $scopeIds;
         if ($filters['store_id'] !== null && $filters['store_id'] !== '' && app(CashierShiftService::class)->storeSchemaReady()) {
             $inStore = PhotoboxStudio::query()
@@ -64,6 +63,7 @@ class PhotoboxTransactionController extends Controller
             })
             ->when($studioId, fn ($q) => $q->where('studio_id', $studioId))
             ->when($allowedIds !== null, fn ($q) => $q->whereIn('studio_id', $allowedIds))
+            ->tap($applyScope)
             ->when($filters['method'], fn ($q, $v) => $q->where('method', $v))
             ->when($filters['status'], fn ($q, $v) => $q->where('status', $v))
             ->when($filters['test'] === 'only', fn ($q) => $q->where('is_test', true))
@@ -141,7 +141,7 @@ class PhotoboxTransactionController extends Controller
         $canManage = ($request->user()?->can('photobox-manage') ?? false) && ($scope === null);
 
         $studioTx = PhotoboxTransaction::query()
-            ->when($scopeIds !== null, fn ($q) => $q->whereIn('studio_id', $scopeIds))
+            ->tap($applyScope)
             ->selectRaw("studio_id, COUNT(*) as count, SUM(CASE WHEN status = 'paid' AND is_test = 0 THEN amount ELSE 0 END) as revenue")
             ->groupBy('studio_id')->get()->keyBy('studio_id');
 
@@ -149,7 +149,7 @@ class PhotoboxTransactionController extends Controller
             'filters' => $filters,
             'range' => ['start' => $start->toDateString(), 'end' => $end->toDateString()],
             'transactions' => $transactions,
-            'summary' => PhotoboxStats::summary($start, $end, $studioId, $allowedIds),
+            'summary' => PhotoboxStats::summary($start, $end, $studioId, $allowedIds, $scope ? $applyScope : null),
             'studios' => PhotoboxStudio::query()->when($scopeIds !== null, fn ($q) => $q->whereIn('id', $scopeIds))->orderBy('name')->get()->map(fn (PhotoboxStudio $s) => [
                 'id' => $s->id,
                 'tx_count' => (int) ($studioTx[$s->id]->count ?? 0),
@@ -165,8 +165,8 @@ class PhotoboxTransactionController extends Controller
                 ->when($scopeIds !== null, fn ($q) => $q->whereIn('id', PhotoboxStudio::query()->whereIn('id', $scopeIds)->whereNotNull('store_id')->select('store_id')))
                 ->orderBy('name')->get()->map(fn (PhotoboxStore $st) => ['id' => (int) $st->id, 'name' => $st->name, 'studios_count' => (int) $st->studios_count]),
             'galleryStatusOn' => GalleryStatus::baseUrl() !== null,
-            'testCount' => PhotoboxTransaction::query()->where('is_test', true)->when($studioId, fn ($q) => $q->where('studio_id', $studioId))->when($allowedIds !== null, fn ($q) => $q->whereIn('studio_id', $allowedIds))->count(),
-            'scope' => $scope ? ['restricted' => true, 'has_shift' => $scope['has_shift'], 'label' => $scope['label'], 'since' => $scope['since']?->toIso8601String()] : ['restricted' => false, 'has_shift' => true, 'label' => null, 'since' => null],
+            'testCount' => PhotoboxTransaction::query()->where('is_test', true)->when($studioId, fn ($q) => $q->where('studio_id', $studioId))->when($allowedIds !== null, fn ($q) => $q->whereIn('studio_id', $allowedIds))->tap($applyScope)->count(),
+            'scope' => $scope ? ['restricted' => true, 'has_shift' => $scope['has_shift'], 'active' => $scope['active'], 'label' => $scope['label'], 'since' => $scope['since']?->toIso8601String()] : ['restricted' => false, 'has_shift' => true, 'label' => null, 'since' => null],
             'canManage' => $canManage,
             'canEdit' => $request->user()?->can('photobox-edit') ?? false,
             'canDelete' => $request->user()?->can('photobox-delete') ?? false,
@@ -194,10 +194,8 @@ class PhotoboxTransactionController extends Controller
         if ($scope === null) {
             return;
         }
-        $at = $transaction->paid_at ?? $transaction->booth_created_at ?? $transaction->created_at;
-        $ok = $scope['has_shift']
-            && ($scope['studio_ids'] === null || in_array((int) $transaction->studio_id, $scope['studio_ids'], true))
-            && (! $scope['since'] || ! $at || $at->gte($scope['since']));
+        $at = $transaction->paid_at ?? $transaction->created_at;
+        $ok = app(CashierShiftService::class)->photoboxScopeAllows($scope, (int) $transaction->studio_id, $at);
         abort_unless($ok, 403, 'Transaksi ini di luar toko/studio shift Anda.');
     }
 
@@ -294,9 +292,8 @@ class PhotoboxTransactionController extends Controller
     public function destroyTests(Request $request): RedirectResponse
     {
         $studioId = $request->filled('studio_id') ? (int) $request->input('studio_id') : null;
-        $scopeIds = $this->scopeFor($request)['studio_ids'] ?? null;
-        $restricted = $this->scopeFor($request) !== null;
-        $inScope = fn ($q) => $q->when($restricted, fn ($w) => $w->whereIn('studio_id', $scopeIds ?? PhotoboxStudio::query()->pluck('id')->all()));
+        $reqScope = $this->scopeFor($request);
+        $inScope = fn ($q) => app(CashierShiftService::class)->applyPhotoboxScope($q, $reqScope);
         $ids = PhotoboxTransaction::query()->where('is_test', true)->tap($inScope)
             ->when($studioId, fn ($q) => $q->where('studio_id', $studioId))
             ->orderBy('id')->limit(100)->pluck('id');

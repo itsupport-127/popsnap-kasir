@@ -16,3 +16,4 @@ if (config('services.db_backup.schedule')) {
     Schedule::command('db:backup')->dailyAt('02:00');
 }
 Schedule::command('photobox:pull-gallery')->everyMinute()->withoutOverlapping();
+Schedule::command('cashier-shifts:close-forgotten')->hourly()->withoutOverlapping();

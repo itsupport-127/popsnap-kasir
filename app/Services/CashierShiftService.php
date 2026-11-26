@@ -226,6 +226,12 @@ class CashierShiftService
     /** Batas wajar durasi satu shift untuk mengaitkan transaksi photobox (jam). */
     public const MAX_SHIFT_HOURS = 48;
 
+    /** Spanduk peringatan di layar kasir muncul setelah shift terbuka selama ini. */
+    public const FORGOTTEN_BANNER_HOURS = 20;
+
+    /** Email pengingat dikirim sekali pada tiap tahap ini (jam sejak shift dibuka). */
+    public const REMINDER_HOURS = [24, 40];
+
     /**
      * Transaksi photobox yang LUNAS, asli (bukan TEST), dan milik shift ini.
      * Photobox tidak punya kasir, jadi dikaitkan lewat waktu bayar DAN cakupan studio/toko shift.
@@ -647,6 +653,33 @@ class CashierShiftService
         });
     }
 
+    /**
+     * Tutup otomatis shift yang lupa ditutup (>= MAX_SHIFT_HOURS). Kas fisik TIDAK diketahui, jadi actual_cash &
+     * selisih dikosongkan (bukan dikarang); status "force_closed" + catatan. Admin/kasir bisa mengisi kas fisik
+     * sesudahnya lewat form koreksi di halaman shift.
+     */
+    public function autoCloseForgottenShift(CashierShift $shift): ?CashierShift
+    {
+        return DB::transaction(function () use ($shift) {
+            $locked = CashierShift::query()->lockForUpdate()->find($shift->id);
+            if (! $locked || ! $locked->isOpen()) {
+                return null;
+            }
+            $hours = (int) $locked->opened_at->diffInHours(now());
+            $locked->update([
+                ...$this->calculateSummary($locked),
+                'actual_cash' => null,
+                'cash_difference' => null,
+                'closed_at' => now(),
+                'closed_by' => null,
+                'close_notes' => "Ditutup otomatis oleh sistem: shift terbuka {$hours} jam tanpa ditutup. Kas fisik belum dihitung — isi lewat \"Koreksi kas fisik\" di halaman shift.",
+                'status' => CashierShift::STATUS_FORCE_CLOSED,
+            ]);
+
+            return $locked->fresh(['user:id,name']);
+        });
+    }
+
     public function updateExpenses(
         CashierShift $shift,
         User $actor,
@@ -697,6 +730,9 @@ class CashierShiftService
             'opened_at' => optional($shift->opened_at)?->toISOString(),
             'notes' => $shift->notes,
             'photobox_scope_label' => $this->scopeLabel($shift),
+            'hours_open' => (int) $shift->opened_at->diffInHours(now()),
+            'forgotten_warning' => $shift->opened_at->diffInHours(now()) >= self::FORGOTTEN_BANNER_HOURS,
+            'auto_close_at' => $shift->opened_at->copy()->addHours(self::MAX_SHIFT_HOURS)->toISOString(),
             'user' => $shift->user ? [
                 'id' => $shift->user->id,
                 'name' => $shift->user->name,
@@ -726,30 +762,99 @@ class CashierShiftService
 
     /**
      * Batas transaksi photobox yang boleh dilihat user di halaman Transaksi Photobox.
-     * null = tanpa batas (admin). Selain itu hanya yang masuk cakupan SHIFT AKTIF-nya:
-     *   studio_ids : daftar studio (null = semua studio, bila shift memegang "semua studio"),
-     *   since      : waktu shift dibuka (yang lebih lama tidak tampil),
-     *   has_shift  : false bila tidak ada shift aktif -> tidak ada yang tampil.
+     * null = tanpa batas (admin). Kasir melihat transaksi dari SEMUA shift miliknya (aktif maupun yang sudah
+     * ditutup, 120 hari terakhir) — masing-masing hanya untuk toko/studio dan rentang waktu shift itu — supaya
+     * bisa dipakai merekap setelah shift ditutup.
+     *   windows    : [{studio_ids: ?array (null = semua studio), from, to}]
+     *   studio_ids : gabungan studio semua window (null bila ada yang memegang semua studio)
+     *   has_shift  : false bila kasir belum pernah punya shift -> tidak ada yang tampil
+     *   active     : ada shift yang sedang terbuka
      *
-     * @return array{studio_ids: ?array<int,int>, since: ?\Illuminate\Support\Carbon, has_shift: bool, label: ?string}|null
+     * @return array{windows: array<int,array{studio_ids: ?array, from: \Illuminate\Support\Carbon, to: \Illuminate\Support\Carbon}>, studio_ids: ?array<int,int>, since: ?\Illuminate\Support\Carbon, has_shift: bool, active: bool, label: ?string}|null
      */
     public function photoboxScopeFor(User $user): ?array
     {
         if ($this->canSeeAllPhotobox($user)) {
             return null;
         }
-        $shift = $this->getActiveShiftForUser($user->id);
-        if (! $shift) {
-            return ['studio_ids' => [], 'since' => null, 'has_shift' => false, 'label' => null];
-        }
-        $ids = $shift->studioIds();
-        if ($ids === [] && $shift->photobox_store_id && Schema::hasTable('photobox_studios') && Schema::hasColumn('photobox_studios', 'store_id')) {
-            $ids = DB::table('photobox_studios')->where('store_id', $shift->photobox_store_id)->pluck('id')->map(fn ($i) => (int) $i)->all();
-        } elseif ($ids === []) {
-            $ids = null; // shift "semua studio"
+        $shifts = CashierShift::query()
+            ->where('user_id', $user->id)
+            ->where('opened_at', '>=', now()->subDays(120))
+            ->orderByDesc('opened_at')
+            ->limit(200)
+            ->get();
+
+        $windows = [];
+        $union = [];
+        $all = false;
+        $active = null;
+        foreach ($shifts as $shift) {
+            $ids = $shift->studioIds();
+            if ($ids === [] && $shift->photobox_store_id && $this->storeSchemaReady()) {
+                $ids = DB::table('photobox_studios')->where('store_id', $shift->photobox_store_id)->pluck('id')->map(fn ($i) => (int) $i)->all();
+            } elseif ($ids === []) {
+                $ids = null; // shift "semua studio"
+            }
+            $windows[] = [
+                'studio_ids' => $ids,
+                'from' => $shift->opened_at,
+                'to' => $shift->closed_at ?? $shift->opened_at->copy()->addHours(self::MAX_SHIFT_HOURS),
+            ];
+            if ($ids === null) {
+                $all = true;
+            } else {
+                $union = array_merge($union, $ids);
+            }
+            if ($shift->isOpen() && ! $active) {
+                $active = $shift;
+            }
         }
 
-        return ['studio_ids' => $ids, 'since' => $shift->opened_at, 'has_shift' => true, 'label' => $this->scopeLabel($shift)];
+        return [
+            'windows' => $windows,
+            'studio_ids' => $all ? null : array_values(array_unique($union)),
+            'since' => $shifts->last()?->opened_at,
+            'has_shift' => $windows !== [],
+            'active' => $active !== null,
+            'label' => $active ? $this->scopeLabel($active) : null,
+        ];
+    }
+
+    /** Terapkan batas hasil photoboxScopeFor() ke query photobox_transactions (null = tanpa batas). */
+    public function applyPhotoboxScope($query, ?array $scope)
+    {
+        if ($scope === null) {
+            return $query;
+        }
+        $at = 'COALESCE(photobox_transactions.paid_at, photobox_transactions.created_at)';
+
+        return $query->where(function ($outer) use ($scope, $at) {
+            $outer->whereRaw('1 = 0'); // tanpa window = tidak ada yang tampil
+            foreach ($scope['windows'] as $w) {
+                $outer->orWhere(function ($q) use ($w, $at) {
+                    $q->whereRaw("$at >= ?", [$w['from']])->whereRaw("$at <= ?", [$w['to']]);
+                    if ($w['studio_ids'] !== null) {
+                        $q->whereIn('photobox_transactions.studio_id', $w['studio_ids']);
+                    }
+                });
+            }
+        });
+    }
+
+    /** Apakah satu transaksi (studio + waktu) ada dalam salah satu window shift user. */
+    public function photoboxScopeAllows(?array $scope, int $studioId, $at): bool
+    {
+        if ($scope === null) {
+            return true;
+        }
+        foreach ($scope['windows'] as $w) {
+            if (($w['studio_ids'] === null || in_array($studioId, $w['studio_ids'], true))
+                && (! $at || ($at->gte($w['from']) && $at->lte($w['to'])))) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     public function reportRecipients(): array

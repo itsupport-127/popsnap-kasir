@@ -97,7 +97,7 @@ Tiap transaksi `paid`, asli (bukan TEST), `paid_at` dalam jendela shift, punya t
 4. shift lupa-tutup tidak mengklaim melewati 48 jam (`MAX_SHIFT_HOURS`).
 **Konsekuensi:** studio/toko tanpa shift yang memegangnya (dan tanpa shift "semua studio") → penjualannya tidak masuk laporan shift mana pun.
 
-**Hak lihat riwayat photobox:** admin (superadmin, role `admin`, atau izin `cashier-shifts-force-close`; izin `photobox-manage` TIDAK cukup) melihat semua toko dan studio (filter Toko/Studio); kasir hanya yang masuk cakupan shift aktifnya sejak shift dibuka, dan tidak bisa mengubah/menghapus transaksi di luar cakupan.
+**Hak lihat riwayat photobox:** admin (superadmin, role `admin`, atau izin `cashier-shifts-force-close`; izin `photobox-manage` TIDAK cukup) melihat semua toko dan studio (filter Toko/Studio); kasir melihat transaksi dari semua shift miliknya (aktif dan yang sudah ditutup) untuk toko/studio dan rentang waktu masing-masing shift, dan tidak bisa mengubah/menghapus transaksi di luar cakupan.
 
 ### 5.3 Data pelanggan
 Pelanggan, poin loyalti, kredit, voucher, segmen = milik **toko**, bukan per kasir/studio. Transaksi mencatat kasirnya, sehingga laporan dapat difilter tanpa memecah data.
