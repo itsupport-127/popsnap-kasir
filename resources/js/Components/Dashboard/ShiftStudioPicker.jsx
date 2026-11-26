@@ -16,7 +16,7 @@ const chip = (active) =>
  * `stores` = { stores: [{id,name,studios:[{id,name}]}], unassigned: [{id,name}] }.
  * Belum ada toko -> tampil daftar studio datar seperti sebelumnya (`studios`).
  */
-export default function ShiftStudioPicker({ studios = [], stores = null, storeId = null, studioIds = [], onChange, className = "" }) {
+export default function ShiftStudioPicker({ studios = [], stores = null, storeId = null, studioIds = [], chosen = true, onChange, className = "" }) {
     const storeList = stores?.stores ?? [];
     const unassigned = stores?.unassigned ?? [];
     const hasStores = storeList.length > 0;
@@ -61,14 +61,14 @@ export default function ShiftStudioPicker({ studios = [], stores = null, storeId
         <div className={className}>
             <label className="mb-2 block text-sm font-medium text-slate-700 dark:text-slate-300">Toko dan studio photobox yang dipegang</label>
             <div className="flex flex-wrap gap-2">
-                <button type="button" onClick={pickAll} className={chip(mode === "all")}>Semua studio</button>
+                <button type="button" onClick={pickAll} className={chip(chosen && mode === "all")}>Semua toko &amp; studio</button>
                 {storeList.map((s) => (
-                    <button key={s.id} type="button" onClick={() => pickStore(s)} className={chip(mode === "store" && storeId === s.id)}>
+                    <button key={s.id} type="button" onClick={() => pickStore(s)} className={chip(chosen && mode === "store" && storeId === s.id)}>
                         {s.name} <span className="text-xs opacity-70">({s.studios.length} studio)</span>
                     </button>
                 ))}
                 {unassigned.length > 0 && (
-                    <button type="button" onClick={pickNone} className={chip(mode === "none")}>Studio tanpa toko</button>
+                    <button type="button" onClick={pickNone} className={chip(chosen && mode === "none")}>Studio tanpa toko</button>
                 )}
             </div>
 
@@ -100,7 +100,8 @@ export default function ShiftStudioPicker({ studios = [], stores = null, storeId
                 </div>
             )}
 
-            {hint("Transaksi photobox hanya masuk ke shift ini kalau berasal dari cakupan yang dipilih. Tidak bisa diubah setelah shift dibuka.")}
+            {!chosen && <p className="mt-2 text-xs font-semibold text-amber-600 dark:text-amber-400">Pilih dulu toko atau studio yang Anda pegang hari ini.</p>}
+            {hint("Anda hanya akan melihat dan dihitung dari transaksi photobox toko/studio yang dipilih. “Semua toko & studio” berarti semuanya. Tidak bisa diubah setelah shift dibuka.")}
         </div>
     );
 }

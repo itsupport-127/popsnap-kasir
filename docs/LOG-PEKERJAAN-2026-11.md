@@ -66,6 +66,18 @@ Solusi: shift boleh memegang satu atau lebih studio.
 - Perbaikan: `CashierShiftService::storeSchemaReady()`. Selama migrasi belum jalan, logika toko dilewati (shift = semua studio / studio tertentu) dan tidak ada 500. **Tetap wajib `php artisan migrate`** agar fitur toko aktif. Ada tes simulasi "belum migrate".
 - Modal awal 0: `<input type="number">` membuang isian bertitik/berkoma ("205.000" / "205,000") jadi kosong → 0 tanpa peringatan. Diganti `RupiahInput` (hanya angka, tampil "205.000") di form buka shift (halaman Shift & Transaksi) + konfirmasi bila modal Rp 0. Modal tidak bisa diubah setelah shift dibuka (tutup dan buka ulang).
 
+**Audit bug & kebingungan kasir (26 Nov 2026):**
+| # | Temuan | Status |
+|---|---|---|
+| 1 | **Kritis:** role `cashier` bawaan memegang `photobox-manage/edit/delete`. Aturan "admin = photobox-manage" membuat SEMUA kasir dianggap admin → batasan toko tidak pernah berlaku. | Diperbaiki: admin = superadmin / role `admin` / izin `cashier-shifts-force-close`. Kelola toko/studio/token 403 untuk non-admin apa pun izinnya. |
+| 2 | Form buka shift memilih "Semua studio" otomatis → kasir yang lupa memilih memegang semua toko. | Diperbaiki: bila sudah ada toko, wajib pilih toko/studio (tombol nonaktif sampai dipilih). |
+| 3 | Kasir tidak tahu toko mana yang sedang dipegang. | Header POS kini menampilkan "Shift aktif • Toko X" + banner di halaman Transaksi Photobox. |
+| 4 | Halaman Transaksi Photobox kosong setelah tutup shift tanpa penjelasan. | Banner menjelaskan; rekap ada di laporan shift. |
+| 5 | Role `cashier` masih punya `photobox-edit` & `photobox-delete`: kasir bisa menghapus/mengubah transaksi di cakupannya (mempengaruhi pendapatan). | **Belum diubah** (keputusan kebijakan). Saran: cabut dari role kasir lewat menu Role. |
+| 6 | Email laporan shift dikirim ke daftar penerima yang sama untuk semua toko. | **Belum diubah.** Saran: penerima per toko. |
+| 7 | Shift lupa ditutup > 48 jam: transaksi photobox setelahnya tidak masuk shift itu. | Dicatat; pertimbangkan pengingat / tutup otomatis. |
+| 8 | Shift terbuka sehari semalam (#174) tetap benar hitungannya (diverifikasi manual terhadap dump). | OK |
+
 Langkah pasang: ekstrak zip → `php artisan migrate` → `npm run build` → buka satu shift uji dengan studio terpilih.
 Rollback: `php artisan migrate:rollback --step=1` menghapus tabel pivot; shift kembali berperilaku "semua studio".
 

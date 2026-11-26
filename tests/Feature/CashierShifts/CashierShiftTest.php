@@ -672,7 +672,7 @@ class CashierShiftTest extends TestCase
     public function test_store_management_assign_rename_and_delete_guard(): void
     {
         Permission::firstOrCreate(['name' => 'photobox-manage', 'guard_name' => 'web']);
-        $admin = $this->createUserWithPermissions(['cashier-shifts-access', 'cashier-shifts-open', 'photobox-manage']);
+        $admin = $this->createUserWithPermissions(['cashier-shifts-access', 'cashier-shifts-open', 'cashier-shifts-force-close', 'photobox-manage']);
 
         $this->actingAs($admin)->post(route('photobox-stores.store'), ['name' => 'POPSNAP'])->assertSessionHasNoErrors();
         $this->actingAs($admin)->post(route('photobox-stores.store'), ['name' => 'POPSNAP'])->assertSessionHasErrors('name'); // unik
@@ -848,6 +848,54 @@ class CashierShiftTest extends TestCase
 
         $this->actingAs($a)->post(route('cashier-shifts.close', $shift), ['actual_cash' => 205000])->assertRedirect();
         $this->assertSame(CashierShift::STATUS_CLOSED, $shift->fresh()->status);
+    }
+
+    public function test_cashier_role_with_photobox_manage_is_still_restricted_and_cannot_manage_stores(): void
+    {
+        // role "cashier" bawaan memegang photobox-manage/edit/delete: itu TIDAK boleh membuatnya dianggap admin
+        foreach (['photobox-access', 'photobox-manage'] as $perm) {
+            Permission::firstOrCreate(['name' => $perm, 'guard_name' => 'web']);
+        }
+        $cashier = $this->createUserWithPermissions(['cashier-shifts-access', 'photobox-access', 'photobox-manage']);
+        $popsnap = \App\Models\PhotoboxStore::create(['name' => 'POPSNAP']);
+        $ccm = \App\Models\PhotoboxStore::create(['name' => 'CCM']);
+        $this->inStore($this->studioWithSale('P1', 'PB-V-0020', 10000), $popsnap);
+        $this->inStore($this->studioWithSale('C1', 'PB-V-0021', 20000), $ccm);
+        $this->storeShift($cashier, now()->subHours(3), $ccm->id);
+
+        $props = $this->photoboxIndexProps($cashier);
+        $this->assertSame(['PB-V-0021'], $props['transactions']->pluck('order_no')->all());
+        $this->assertFalse($props['canManage']);
+
+        $this->withoutExceptionHandling();
+        foreach ([
+            fn () => $this->actingAs($cashier)->post(route('photobox-stores.store'), ['name' => 'BARU']),
+            fn () => $this->actingAs($cashier)->put(route('photobox-studios.update', PhotoboxStudio::first()), ['store_id' => $popsnap->id]),
+            fn () => $this->actingAs($cashier)->post(route('photobox-studios.token', PhotoboxStudio::first())),
+        ] as $call) {
+            try {
+                $call();
+                $this->fail('Harus ditolak 403');
+            } catch (\Symfony\Component\HttpKernel\Exception\HttpException $e) {
+                $this->assertSame(403, $e->getStatusCode());
+            }
+        }
+        $this->assertSame(2, \App\Models\PhotoboxStore::count());
+    }
+
+    public function test_admin_role_and_active_shift_display_carry_scope_label(): void
+    {
+        Permission::firstOrCreate(['name' => 'photobox-access', 'guard_name' => 'web']);
+        $adminRole = \Spatie\Permission\Models\Role::firstOrCreate(['name' => 'admin', 'guard_name' => 'web']);
+        $admin = $this->createUserWithPermissions(['cashier-shifts-access', 'photobox-access']);
+        $admin->assignRole($adminRole);
+        $this->assertTrue(app(\App\Services\CashierShiftService::class)->canSeeAllPhotobox($admin));
+
+        $store = \App\Models\PhotoboxStore::create(['name' => 'POPSNAP']);
+        $cashier = $this->createUserWithPermissions(['cashier-shifts-access']);
+        $shift = $this->storeShift($cashier, now()->subHour(), $store->id);
+        $this->assertFalse(app(\App\Services\CashierShiftService::class)->canSeeAllPhotobox($cashier));
+        $this->assertSame('Toko POPSNAP (semua studio)', app(\App\Services\CashierShiftService::class)->summarizeForDisplay($shift)['photobox_scope_label']);
     }
 
     private function createUserWithPermissions(array $permissions): User

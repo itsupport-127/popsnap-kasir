@@ -209,6 +209,7 @@ export default function Index({
     const [openingCashInput, setOpeningCashInput] = useState("");
     const [shiftStudioIds, setShiftStudioIds] = useState([]);
     const [shiftStoreId, setShiftStoreId] = useState(null);
+    const [scopeChosen, setScopeChosen] = useState(false);
     const [shiftNotesInput, setShiftNotesInput] = useState("");
     const normalizedSelectedCategory =
         selectedCategory === null ? null : Number(selectedCategory);
@@ -576,7 +577,9 @@ export default function Index({
         }
     }, [isCashPayment, payable]);
 
+    const needsScope = (photoboxStores?.stores?.length ?? 0) > 0 && !scopeChosen; // sudah ada toko: wajib pilih cakupan dulu
     const handleOpenShift = () => {
+        if (needsScope) return;
         if (!Number(openingCashInput) && !window.confirm("Modal awal Rp 0. Lanjut buka shift? (Modal tidak bisa diubah setelah shift dibuka.)")) return;
         router.post(route("cashier-shifts.store"), {
             opening_cash: Number(openingCashInput || 0),
@@ -992,7 +995,8 @@ export default function Index({
                                 stores={photoboxStores}
                                 storeId={shiftStoreId}
                                 studioIds={shiftStudioIds}
-                                onChange={(nextStore, nextStudios) => { setShiftStoreId(nextStore); setShiftStudioIds(nextStudios); }}
+                                chosen={scopeChosen}
+                                onChange={(nextStore, nextStudios) => { setScopeChosen(true); setShiftStoreId(nextStore); setShiftStudioIds(nextStudios); }}
                                 className="md:col-span-2"
                             />
                         </div>
@@ -1002,7 +1006,9 @@ export default function Index({
                                 <button
                                     type="button"
                                     onClick={handleOpenShift}
-                                    className="inline-flex items-center justify-center gap-2 rounded-2xl bg-primary-500 px-5 py-3 text-sm font-medium text-white transition-colors hover:bg-primary-600"
+                                    disabled={needsScope}
+                                    title={needsScope ? "Pilih toko/studio dulu" : undefined}
+                                    className="inline-flex items-center justify-center gap-2 rounded-2xl bg-primary-500 px-5 py-3 text-sm font-medium text-white transition-colors hover:bg-primary-600 disabled:cursor-not-allowed disabled:opacity-50"
                                 >
                                     <IconWallet size={18} />
                                     <span>Buka Shift Sekarang</span>

@@ -696,6 +696,7 @@ class CashierShiftService
             'opening_cash' => (int) $shift->opening_cash,
             'opened_at' => optional($shift->opened_at)?->toISOString(),
             'notes' => $shift->notes,
+            'photobox_scope_label' => $this->scopeLabel($shift),
             'user' => $shift->user ? [
                 'id' => $shift->user->id,
                 'name' => $shift->user->name,
@@ -713,10 +714,14 @@ class CashierShiftService
         return $query->where('user_id', $user->id);
     }
 
-    /** Admin / superadmin (atau pengelola photobox) melihat transaksi photobox SEMUA toko dan studio. */
+    /**
+     * Admin / superadmin melihat dan mengelola transaksi photobox SEMUA toko dan studio.
+     * Sengaja TIDAK memakai izin `photobox-manage`: role `cashier` bawaan sudah memegang izin itu,
+     * jadi kasir akan ikut dianggap admin dan batasan toko tidak berlaku.
+     */
     public function canSeeAllPhotobox(User $user): bool
     {
-        return $user->isSuperAdmin() || $user->can('cashier-shifts-force-close') || $user->can('photobox-manage');
+        return $user->isSuperAdmin() || $user->hasRole('admin') || $user->can('cashier-shifts-force-close');
     }
 
     /**

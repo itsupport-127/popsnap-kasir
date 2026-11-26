@@ -48,6 +48,8 @@ export default function Index({
     const [notes, setNotes] = useState("");
     const [studioIds, setStudioIds] = useState([]);
     const [storeId, setStoreId] = useState(null);
+    const [scopeChosen, setScopeChosen] = useState(false);
+    const needsScope = (photoboxStores?.stores?.length ?? 0) > 0 && !scopeChosen; // sudah ada toko: wajib pilih cakupan dulu
     const [sendingEmailId, setSendingEmailId] = useState(null);
     const canOpenShift = can("cashier-shifts-open");
 
@@ -106,6 +108,7 @@ export default function Index({
     const handleOpenShift = (event) => {
         event.preventDefault();
 
+        if (needsScope) return;
         if (!Number(openingCash) && !window.confirm("Modal awal Rp 0. Lanjut buka shift? (Modal tidak bisa diubah setelah shift dibuka.)")) return;
 
         router.post(route("cashier-shifts.store"), {
@@ -180,7 +183,8 @@ export default function Index({
                                 stores={photoboxStores}
                                 storeId={storeId}
                                 studioIds={studioIds}
-                                onChange={(nextStore, nextStudios) => { setStoreId(nextStore); setStudioIds(nextStudios); }}
+                                chosen={scopeChosen}
+                                onChange={(nextStore, nextStudios) => { setScopeChosen(true); setStoreId(nextStore); setStudioIds(nextStudios); }}
                                 className="md:col-span-3"
                             />
                             {errors?.photobox_studio_ids && (
@@ -189,7 +193,9 @@ export default function Index({
                             <div className="md:col-span-3">
                                 <button
                                     type="submit"
-                                    className="inline-flex items-center gap-2 rounded-xl bg-primary-500 px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-primary-600"
+                                    disabled={needsScope}
+                                    title={needsScope ? "Pilih toko/studio dulu" : undefined}
+                                    className="inline-flex items-center gap-2 rounded-xl bg-primary-500 px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-primary-600 disabled:cursor-not-allowed disabled:opacity-50"
                                 >
                                     <IconCashBanknote size={18} />
                                     <span>Buka Shift</span>

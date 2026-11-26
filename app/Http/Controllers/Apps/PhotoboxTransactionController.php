@@ -138,7 +138,7 @@ class PhotoboxTransactionController extends Controller
             return $r;
         }));
 
-        $canManage = $request->user()?->can('photobox-manage') ?? false;
+        $canManage = ($request->user()?->can('photobox-manage') ?? false) && ($scope === null);
 
         $studioTx = PhotoboxTransaction::query()
             ->when($scopeIds !== null, fn ($q) => $q->whereIn('studio_id', $scopeIds))
@@ -174,6 +174,12 @@ class PhotoboxTransactionController extends Controller
             'newToken' => session('photobox_new_token'),
             'newTokenStudio' => session('photobox_new_token_studio'),
         ]);
+    }
+
+    /** Kelola toko/studio/token hanya untuk admin & superadmin (kasir hanya melihat), apa pun izin rolenya. */
+    private function requireAdmin(Request $request): void
+    {
+        abort_unless($request->user() && app(CashierShiftService::class)->canSeeAllPhotobox($request->user()), 403, 'Hanya admin yang boleh mengelola toko dan studio.');
     }
 
     private function scopeFor(Request $request): ?array
@@ -326,6 +332,7 @@ class PhotoboxTransactionController extends Controller
 
     public function storeStudio(Request $request): RedirectResponse
     {
+        $this->requireAdmin($request);
         $data = $request->validate([
             'name' => ['required', 'string', 'max:100'],
             'store_id' => ['nullable', 'integer', 'exists:photobox_stores,id'],
@@ -337,8 +344,9 @@ class PhotoboxTransactionController extends Controller
         return back()->with(['photobox_new_token' => $token, 'photobox_new_token_studio' => $studio->name]);
     }
 
-    public function regenerateToken(PhotoboxStudio $studio): RedirectResponse
+    public function regenerateToken(Request $request, PhotoboxStudio $studio): RedirectResponse
     {
+        $this->requireAdmin($request);
         $token = $studio->issueToken();
 
         return back()->with(['photobox_new_token' => $token, 'photobox_new_token_studio' => $studio->name]);
@@ -347,6 +355,7 @@ class PhotoboxTransactionController extends Controller
     /** Ubah nama studio dan/atau pindahkan ke toko lain (store_id kosong = "Tanpa toko"). */
     public function updateStudio(Request $request, PhotoboxStudio $studio): RedirectResponse
     {
+        $this->requireAdmin($request);
         $data = $request->validate([
             'name' => ['sometimes', 'required', 'string', 'max:100'],
             'store_id' => ['sometimes', 'nullable', 'integer', 'exists:photobox_stores,id'],
@@ -369,6 +378,7 @@ class PhotoboxTransactionController extends Controller
 
     public function storeStore(Request $request): RedirectResponse
     {
+        $this->requireAdmin($request);
         $data = $request->validate(['name' => ['required', 'string', 'max:100', 'unique:photobox_stores,name']]);
         PhotoboxStore::create(['name' => trim($data['name'])]);
 
@@ -377,6 +387,7 @@ class PhotoboxTransactionController extends Controller
 
     public function updateStore(Request $request, PhotoboxStore $store): RedirectResponse
     {
+        $this->requireAdmin($request);
         $data = $request->validate(['name' => ['required', 'string', 'max:100', 'unique:photobox_stores,name,'.$store->id]]);
         $store->update(['name' => trim($data['name'])]);
 
@@ -387,8 +398,9 @@ class PhotoboxTransactionController extends Controller
      * Hapus toko: studionya menjadi "Tanpa toko" (transaksi tidak tersentuh). Ditolak selama ada shift TERBUKA yang memegang toko ini,
      * supaya shift itu tidak diam-diam kehilangan cakupannya.
      */
-    public function destroyStore(PhotoboxStore $store): RedirectResponse
+    public function destroyStore(Request $request, PhotoboxStore $store): RedirectResponse
     {
+        $this->requireAdmin($request);
         $open = CashierShift::query()->where('status', CashierShift::STATUS_OPEN)->where('photobox_store_id', $store->id)->count();
         if ($open > 0) {
             return back()->withErrors(['store' => 'Toko ini sedang dipegang '.$open.' shift yang masih terbuka. Tutup shift itu dulu.']);
@@ -407,6 +419,7 @@ class PhotoboxTransactionController extends Controller
      */
     public function destroyStudio(Request $request, PhotoboxStudio $studio): RedirectResponse
     {
+        $this->requireAdmin($request);
         $count = $studio->transactions()->count(); // transaksi yang masih tampil (yang sudah dihapus ikut terhapus diam-diam)
         if ($count > 0) {
             abort_unless($request->user()?->can('photobox-delete'), 403, 'Studio ini punya transaksi; menghapusnya butuh izin hapus transaksi Photobox.');
@@ -421,8 +434,9 @@ class PhotoboxTransactionController extends Controller
         return back()->with('success', 'Studio '.$name.' dihapus'.($count > 0 ? ' beserta '.$count.' transaksinya.' : '.'));
     }
 
-    public function toggleStudio(PhotoboxStudio $studio): RedirectResponse
+    public function toggleStudio(Request $request, PhotoboxStudio $studio): RedirectResponse
     {
+        $this->requireAdmin($request);
         $studio->update(['is_active' => ! $studio->is_active]);
 
         return back();
