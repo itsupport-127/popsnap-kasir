@@ -45,7 +45,7 @@ class PhotoboxTransactionController extends Controller
             $start = $scope['since']->copy();
         }
         $allowedIds = $scopeIds;
-        if ($filters['store_id'] !== null && $filters['store_id'] !== '') {
+        if ($filters['store_id'] !== null && $filters['store_id'] !== '' && app(CashierShiftService::class)->storeSchemaReady()) {
             $inStore = PhotoboxStudio::query()
                 ->when($filters['store_id'] === 'none', fn ($q) => $q->whereNull('store_id'), fn ($q) => $q->where('store_id', (int) $filters['store_id']))
                 ->pluck('id')->map(fn ($i) => (int) $i)->all();
@@ -161,7 +161,7 @@ class PhotoboxTransactionController extends Controller
                 'last_seen_at' => $s->last_seen_at?->toIso8601String(),
                 'status' => $s->reportSummary(),
             ]),
-            'stores' => PhotoboxStore::query()->withCount('studios')
+            'stores' => ! app(CashierShiftService::class)->storeSchemaReady() ? [] : PhotoboxStore::query()->withCount('studios')
                 ->when($scopeIds !== null, fn ($q) => $q->whereIn('id', PhotoboxStudio::query()->whereIn('id', $scopeIds)->whereNotNull('store_id')->select('store_id')))
                 ->orderBy('name')->get()->map(fn (PhotoboxStore $st) => ['id' => (int) $st->id, 'name' => $st->name, 'studios_count' => (int) $st->studios_count]),
             'galleryStatusOn' => GalleryStatus::baseUrl() !== null,
@@ -330,7 +330,7 @@ class PhotoboxTransactionController extends Controller
             'name' => ['required', 'string', 'max:100'],
             'store_id' => ['nullable', 'integer', 'exists:photobox_stores,id'],
         ]);
-        $studio = new PhotoboxStudio(['name' => $data['name'], 'store_id' => $data['store_id'] ?? null, 'is_active' => true, 'token_hash' => bin2hex(random_bytes(32))]);
+        $studio = new PhotoboxStudio(['name' => $data['name'], ...(! empty($data['store_id']) ? ['store_id' => (int) $data['store_id']] : []), 'is_active' => true, 'token_hash' => bin2hex(random_bytes(32))]);
         $studio->save();
         $token = $studio->issueToken();
 

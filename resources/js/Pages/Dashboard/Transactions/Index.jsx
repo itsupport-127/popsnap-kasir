@@ -6,6 +6,7 @@ import React, {
     useRef,
 } from "react";
 import ShiftStudioPicker from "@/Components/Dashboard/ShiftStudioPicker";
+import RupiahInput from "@/Components/Dashboard/RupiahInput";
 import QrisStaticDisplay from "@/Components/Dashboard/QrisStaticDisplay";
 import { Head, Link, router, usePage } from "@inertiajs/react";
 import axios from "axios";
@@ -576,6 +577,7 @@ export default function Index({
     }, [isCashPayment, payable]);
 
     const handleOpenShift = () => {
+        if (!Number(openingCashInput) && !window.confirm("Modal awal Rp 0. Lanjut buka shift? (Modal tidak bisa diubah setelah shift dibuka.)")) return;
         router.post(route("cashier-shifts.store"), {
             opening_cash: Number(openingCashInput || 0),
             notes: shiftNotesInput,
@@ -964,16 +966,7 @@ export default function Index({
                                 <label className="mb-2 block text-sm font-medium text-slate-700 dark:text-slate-300">
                                     Modal Awal
                                 </label>
-                                <input
-                                    type="number"
-                                    min="0"
-                                    value={openingCashInput}
-                                    onChange={(event) =>
-                                        setOpeningCashInput(event.target.value)
-                                    }
-                                    className="h-12 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-sm text-slate-800 outline-none transition focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
-                                    placeholder="0"
-                                />
+                                <RupiahInput value={openingCashInput} onChange={setOpeningCashInput} className="h-12 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 text-sm text-slate-800 outline-none transition focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200" />
                                 {errors?.opening_cash && (
                                     <p className="mt-2 text-xs text-rose-500">
                                         {errors.opening_cash}

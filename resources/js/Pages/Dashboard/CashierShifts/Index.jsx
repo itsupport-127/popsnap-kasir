@@ -6,6 +6,7 @@ import DashboardLayout from "@/Layouts/DashboardLayout";
 import Table from "@/Components/Dashboard/Table";
 import Pagination from "@/Components/Dashboard/Pagination";
 import ShiftStudioPicker from "@/Components/Dashboard/ShiftStudioPicker";
+import RupiahInput from "@/Components/Dashboard/RupiahInput";
 import { useAuthorization } from "@/Utils/authorization";
 import {
     IconCashBanknote,
@@ -105,6 +106,8 @@ export default function Index({
     const handleOpenShift = (event) => {
         event.preventDefault();
 
+        if (!Number(openingCash) && !window.confirm("Modal awal Rp 0. Lanjut buka shift? (Modal tidak bisa diubah setelah shift dibuka.)")) return;
+
         router.post(route("cashier-shifts.store"), {
             opening_cash: Number(openingCash || 0),
             notes,
@@ -155,14 +158,7 @@ export default function Index({
                                 <label className="mb-2 block text-sm font-medium text-slate-700 dark:text-slate-300">
                                     Modal Awal
                                 </label>
-                                <input
-                                    type="number"
-                                    min="0"
-                                    value={openingCash}
-                                    onChange={(event) => setOpeningCash(event.target.value)}
-                                    className="h-11 w-full rounded-xl border border-slate-200 bg-slate-50 px-4 text-sm text-slate-800 outline-none transition focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
-                                    placeholder="0"
-                                />
+                                <RupiahInput value={openingCash} onChange={setOpeningCash} className="h-11 w-full rounded-xl border border-slate-200 bg-slate-50 px-4 text-sm text-slate-800 outline-none transition focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200" />
                                 {errors?.opening_cash && (
                                     <p className="mt-2 text-xs text-rose-500">{errors.opening_cash}</p>
                                 )}

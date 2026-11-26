@@ -53,6 +53,19 @@ class CashierShiftService
         return $shift;
     }
 
+    /**
+     * Fitur toko butuh migrasi 2026_11_26_000100. Selama belum dijalankan, semua logika toko dilewati
+     * (shift berperilaku seperti "studio / semua studio") supaya halaman kasir tidak 500.
+     */
+    private ?bool $storeReady = null;
+
+    public function storeSchemaReady(): bool
+    {
+        return $this->storeReady ??= Schema::hasTable('photobox_stores')
+            && Schema::hasColumn('cashier_shifts', 'photobox_store_id')
+            && Schema::hasColumn('photobox_studios', 'store_id');
+    }
+
     public function openShift(User $cashier, User $actor, int $openingCash, ?string $notes = null, array $studioIds = [], ?int $storeId = null): CashierShift
     {
         $existing = CashierShift::query()
@@ -68,7 +81,7 @@ class CashierShiftService
 
         $studioIds = collect($studioIds)->map(fn ($id) => (int) $id)->filter(fn ($id) => $id > 0)->unique()->values()->all();
 
-        $storeId = $storeId && $storeId > 0 && Schema::hasTable('photobox_stores') && PhotoboxStore::query()->whereKey($storeId)->exists() ? $storeId : null;
+        $storeId = $storeId && $storeId > 0 && $this->storeSchemaReady() && PhotoboxStore::query()->whereKey($storeId)->exists() ? $storeId : null;
         if ($storeId !== null && $studioIds !== []) {
             // Studio yang dipilih harus milik toko itu; yang lain dibuang.
             $studioIds = PhotoboxStudio::query()->where('store_id', $storeId)->whereIn('id', $studioIds)->pluck('id')->map(fn ($id) => (int) $id)->all();
@@ -82,7 +95,7 @@ class CashierShiftService
                 'opening_cash' => $openingCash,
                 'expected_cash' => $openingCash,
                 'notes' => $notes,
-                'photobox_store_id' => $storeId,
+                ...($this->storeSchemaReady() ? ['photobox_store_id' => $storeId] : []),
                 'status' => CashierShift::STATUS_OPEN,
             ]);
 
@@ -231,7 +244,8 @@ class CashierShiftService
     {
         [$start, $end] = $this->shiftWindow($shift);
         $studioIds = $shift->studioIds();
-        $storeId = $shift->photobox_store_id ? (int) $shift->photobox_store_id : null;
+        $ready = $this->storeSchemaReady();
+        $storeId = $ready && $shift->photobox_store_id ? (int) $shift->photobox_store_id : null;
         $rank = $studioIds !== [] ? 0 : ($storeId !== null ? 1 : 2);
         $hasPivot = Schema::hasTable('cashier_shift_studios');
 
@@ -246,7 +260,7 @@ class CashierShiftService
             $query->whereIn('studio_id', fn ($q) => $q->select('id')->from('photobox_studios')->where('store_id', $storeId));
         }
 
-        return $query->whereNotExists(function ($q) use ($shift, $start, $rank, $hasPivot) {
+        return $query->whereNotExists(function ($q) use ($shift, $start, $rank, $hasPivot, $ready) {
             $q->select(DB::raw(1))->from('cashier_shifts as other')
                 ->where('other.id', '!=', $shift->id)
                 ->whereColumn('other.opened_at', '<=', 'photobox_transactions.paid_at')
@@ -264,13 +278,18 @@ class CashierShiftService
             }
 
             // Tingkat cakupan shift lain terhadap studio transaksi ini; NULL = tidak mencakup.
-            $otherRank = 'CASE
+            $otherRank = $ready
+                ? 'CASE
                 WHEN EXISTS (SELECT 1 FROM cashier_shift_studios css WHERE css.cashier_shift_id = other.id AND css.photobox_studio_id = photobox_transactions.studio_id) THEN 0
                 WHEN NOT EXISTS (SELECT 1 FROM cashier_shift_studios c2 WHERE c2.cashier_shift_id = other.id)
                      AND other.photobox_store_id IS NOT NULL
                      AND other.photobox_store_id = (SELECT ps.store_id FROM photobox_studios ps WHERE ps.id = photobox_transactions.studio_id) THEN 1
                 WHEN NOT EXISTS (SELECT 1 FROM cashier_shift_studios c3 WHERE c3.cashier_shift_id = other.id)
                      AND other.photobox_store_id IS NULL THEN 2
+                ELSE NULL END'
+                : 'CASE
+                WHEN EXISTS (SELECT 1 FROM cashier_shift_studios css WHERE css.cashier_shift_id = other.id AND css.photobox_studio_id = photobox_transactions.studio_id) THEN 0
+                WHEN NOT EXISTS (SELECT 1 FROM cashier_shift_studios c3 WHERE c3.cashier_shift_id = other.id) THEN 2
                 ELSE NULL END';
 
             // shift lain merebut bila cakupannya lebih spesifik, atau sama dan dibuka lebih awal
@@ -285,7 +304,7 @@ class CashierShiftService
      */
     public function storeOptions(): array
     {
-        if (! Schema::hasTable('photobox_studios') || ! Schema::hasTable('photobox_stores')) {
+        if (! Schema::hasTable('photobox_studios') || ! $this->storeSchemaReady()) {
             return ['stores' => [], 'unassigned' => $this->studioOptions()];
         }
 
@@ -306,7 +325,7 @@ class CashierShiftService
     public function scopeLabel(CashierShift $shift): string
     {
         $studios = $this->studiosOf($shift);
-        $storeId = $shift->photobox_store_id ? (int) $shift->photobox_store_id : null;
+        $storeId = $this->storeSchemaReady() && $shift->photobox_store_id ? (int) $shift->photobox_store_id : null;
         $store = null;
         if ($storeId !== null) {
             $name = Schema::hasTable('photobox_stores') ? PhotoboxStore::query()->whereKey($storeId)->value('name') : null;
@@ -381,15 +400,18 @@ class CashierShiftService
         $rows = $this->ownedPhotoboxQuery($shift)
             ->where('photobox_transactions.amount', '>', 0)
             ->leftJoin('photobox_studios', 'photobox_studios.id', '=', 'photobox_transactions.studio_id')
-            ->leftJoin('photobox_stores', 'photobox_stores.id', '=', 'photobox_studios.store_id')
+            ->when($this->storeSchemaReady(), fn ($q) => $q->leftJoin('photobox_stores', 'photobox_stores.id', '=', 'photobox_studios.store_id'))
             ->select(
                 DB::raw("COALESCE(photobox_studios.name, 'Tanpa studio') as name"),
-                DB::raw('photobox_stores.name as store_name'),
+                DB::raw($this->storeSchemaReady() ? 'photobox_stores.name as store_name' : 'NULL as store_name'),
                 DB::raw("CASE WHEN photobox_transactions.mode = 'addprint' THEN 1 ELSE 0 END as is_addprint"),
                 DB::raw('COUNT(*) as qty'),
                 DB::raw('SUM(photobox_transactions.amount) as revenue')
             )
-            ->groupBy('photobox_studios.name', 'photobox_stores.name', DB::raw("CASE WHEN photobox_transactions.mode = 'addprint' THEN 1 ELSE 0 END"))
+            ->groupBy(array_merge(
+                array_filter(['photobox_studios.name', $this->storeSchemaReady() ? 'photobox_stores.name' : null]),
+                [DB::raw("CASE WHEN photobox_transactions.mode = 'addprint' THEN 1 ELSE 0 END")]
+            ))
             ->get();
 
         $studios = [];

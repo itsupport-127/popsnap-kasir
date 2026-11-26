@@ -829,6 +829,27 @@ class CashierShiftTest extends TestCase
         $this->assertSame([['name' => 'CCM', 'qty' => 1, 'revenue' => 50000]], $recapAll['stores']);
     }
 
+    public function test_shift_still_works_when_store_migration_has_not_run_yet(): void
+    {
+        $a = $this->createUserWithPermissions(['cashier-shifts-access', 'cashier-shifts-open', 'cashier-shifts-close']);
+        (require database_path('migrations/2026_11_26_000100_create_photobox_stores_table.php'))->down(); // server belum migrate
+        $this->studioWithSale('P1', 'PB-V-0008', 12000); // dibuat sesudah down(): sqlite membangun ulang tabel studio dan mengosongkan transaksi (FK cascade)
+        app()->forgetInstance(\App\Services\CashierShiftService::class);
+        $svc = app(\App\Services\CashierShiftService::class);
+        $this->assertFalse($svc->storeSchemaReady());
+
+        $shift = $svc->openShift($a, $a, 205000, null, [], 99); // toko diabaikan, tidak error
+        $shift->update(['opened_at' => now()->subHours(3)]);
+        $this->assertSame(205000, (int) $shift->fresh()->opening_cash);
+        $this->assertSame(12000, $svc->calculatePhotoboxTotals($shift->fresh())['photobox_sales_total']);
+        $this->assertSame(1, $svc->calculatePhotoboxRecap($shift->fresh())['sessions']);
+        $this->assertSame('Semua studio', $svc->scopeLabel($shift->fresh()));
+        $this->assertSame([], $svc->storeOptions()['stores']);
+
+        $this->actingAs($a)->post(route('cashier-shifts.close', $shift), ['actual_cash' => 205000])->assertRedirect();
+        $this->assertSame(CashierShift::STATUS_CLOSED, $shift->fresh()->status);
+    }
+
     private function createUserWithPermissions(array $permissions): User
     {
         $user = User::factory()->create();

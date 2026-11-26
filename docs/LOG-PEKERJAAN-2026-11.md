@@ -61,6 +61,11 @@ Solusi: shift boleh memegang satu atau lebih studio.
 - Daftar transaksi kasir (`SaleController`) dan retur **sudah** dibatasi ke kasir sendiri untuk non-superadmin — tidak diubah.
 - Data pelanggan (poin, voucher, kredit, segmen) **sengaja tidak dipisah** per kasir/studio.
 
+**Insiden 26 Nov 2026 (deploy tanpa migrate) & perbaikan:**
+- Gejala: halaman Transaksi 500 dan tutup shift gagal. Log: `Unknown column 'other.photobox_store_id'` (kolom dari migrasi `2026_11_26_000100` belum ada di DB server) dan `storeOptions() undefined` (file ter-deploy sebagian).
+- Perbaikan: `CashierShiftService::storeSchemaReady()`. Selama migrasi belum jalan, logika toko dilewati (shift = semua studio / studio tertentu) dan tidak ada 500. **Tetap wajib `php artisan migrate`** agar fitur toko aktif. Ada tes simulasi "belum migrate".
+- Modal awal 0: `<input type="number">` membuang isian bertitik/berkoma ("205.000" / "205,000") jadi kosong → 0 tanpa peringatan. Diganti `RupiahInput` (hanya angka, tampil "205.000") di form buka shift (halaman Shift & Transaksi) + konfirmasi bila modal Rp 0. Modal tidak bisa diubah setelah shift dibuka (tutup dan buka ulang).
+
 Langkah pasang: ekstrak zip → `php artisan migrate` → `npm run build` → buka satu shift uji dengan studio terpilih.
 Rollback: `php artisan migrate:rollback --step=1` menghapus tabel pivot; shift kembali berperilaku "semua studio".
 
