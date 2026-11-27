@@ -88,6 +88,13 @@ tiap shift hanya untuk toko/studio dan rentang waktunya (`CashierShiftService::p
   Email laporan tidak dikirim otomatis. Kas fisik diisi lewat "Koreksi kas fisik" di halaman shift, lalu kirim email manual bila perlu.
 - Uji manual: `php artisan cashier-shifts:close-forgotten --dry-run`.
 
+**Audit login/logout/error & menu riwayat (27 Nov):**
+- Bug: tombol di halaman error (dan tautan "Dashboard" di header kasir) selalu mengarah ke Dashboard. Kasir tanpa izin `dashboard-access` kena 403 berulang ("tidak bisa mengakses halaman"). Perbaikan: `App\Support\HomeRoute` (halaman pertama yang boleh dibuka user) dipakai setelah login, di halaman error, dan header POS; tautan Dashboard hanya muncul bila punya izin.
+- Halaman error (401/403/404/419/429/500/503) dibuat ulang: ikut tema terang/gelap aplikasi (ada tombol ganti tema), memakai logo Popsnap dan warna aplikasi, teks petunjuk per jenis error, tombol Muat Ulang untuk 419/500/503. Tamu diarahkan ke halaman Masuk.
+- Logo di halaman Masuk, Lupa/Reset sandi, Konfirmasi sandi, Verifikasi email, dan Daftar diganti logo Popsnap (sebelumnya ikon keranjang).
+- Menu dibedakan: **Riwayat Kasir (Manual)** = transaksi yang diinput kasir; **Riwayat Booth (Photobox)** = transaksi otomatis dari booth. Pintasan di header kasir (desktop & menu HP) kini memuat keduanya, masing-masing hanya bila punya izin (`transactions-access` / `photobox-access`).
+- Logout: alurnya (POST /logout → audit log → halaman depan) tidak bermasalah; sesi habis (419) kini tampil di halaman error bertema dengan tombol Muat Ulang.
+
 Langkah pasang: ekstrak zip → `php artisan migrate` → `npm run build` → buka satu shift uji dengan studio terpilih.
 Rollback: `php artisan migrate:rollback --step=1` menghapus tabel pivot; shift kembali berperilaku "semua studio".
 

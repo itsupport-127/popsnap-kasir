@@ -437,12 +437,12 @@ export default function Index({ filters, range, transactions, summary, studios, 
 
     return (
         <>
-            <Head title="Transaksi Photobox" />
+            <Head title="Riwayat Booth (Photobox)" />
 
             <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
                 <div>
                     <h1 className="flex items-center gap-2 text-2xl font-bold text-slate-900 dark:text-white">
-                        <IconCamera size={28} className="text-primary-500" /> Transaksi Photobox
+                        <IconCamera size={28} className="text-primary-500" /> Riwayat Booth (Photobox)
                     </h1>
                     <p className="text-sm text-slate-500 dark:text-slate-400">
                         Riwayat transaksi dari app Photobox tiap studio. Nomor transaksinya sama persis dengan di app Photobox.

@@ -175,7 +175,7 @@ const History = ({ transactions, filters, categories = [] }) => {
 
     return (
         <>
-            <Head title="Riwayat Transaksi" />
+            <Head title="Riwayat Kasir (Manual)" />
 
             <div className="space-y-6">
                 {/* Header */}
@@ -186,7 +186,7 @@ const History = ({ transactions, filters, categories = [] }) => {
                                 size={28}
                                 className="text-primary-500"
                             />
-                            Riwayat Transaksi
+                            Riwayat Kasir (Manual)
                         </h1>
                         <p className="text-sm text-slate-500 dark:text-slate-400">
                             {transactions?.total || 0} transaksi tercatat

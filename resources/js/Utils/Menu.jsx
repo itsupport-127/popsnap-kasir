@@ -109,7 +109,7 @@ export default function Menu() {
                     permissions: hasAnyPermission(["transactions-access"]),
                 },
                 {
-                    title: "Riwayat Transaksi",
+                    title: "Riwayat Kasir (Manual)",
                     href: route("transactions.history"),
                     active:
                         url === "/dashboard/transactions/history"
@@ -119,7 +119,7 @@ export default function Menu() {
                     permissions: hasAnyPermission(["transactions-access"]),
                 },
                 {
-                    title: "Transaksi Photobox",
+                    title: "Riwayat Booth (Photobox)",
                     href: route("photobox-transactions.index"),
                     active: url.startsWith("/dashboard/photobox-transactions"),
                     icon: <IconCamera size={20} strokeWidth={1.5} />,

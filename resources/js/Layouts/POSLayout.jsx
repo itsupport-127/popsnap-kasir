@@ -5,6 +5,7 @@ import { useTheme } from "@/Context/ThemeSwitcherContext";
 import {
     IconHome,
     IconHistory,
+    IconCamera,
     IconSun,
     IconMoon,
     IconLogout,
@@ -14,12 +15,18 @@ import {
     IconWallet,
 } from "@tabler/icons-react";
 import Notification from "@/Components/Dashboard/Notification";
+import hasAnyPermission from "@/Utils/Permission";
 import usePrintListener from "@/Hooks/usePrintListener";
 
 export default function POSLayout({ children }) {
     const { auth, storeProfile, activeCashierShift } = usePage().props;
     usePrintListener(); // layar kasir = tempat kasir paling lama berada: print dari HP harus tetap jalan di sini
     const { darkMode, themeSwitcher } = useTheme();
+    // tautan hanya yang boleh dibuka akun ini (menghindari 403 saat kasir tidak punya izin Dashboard)
+    const canDashboard = hasAnyPermission(["dashboard-access"]);
+    const canManualHistory = hasAnyPermission(["transactions-access"]);
+    const canBoothHistory = hasAnyPermission(["photobox-access"]);
+    const homeHref = canDashboard ? route("dashboard") : route("transactions.index");
     const [currentTime, setCurrentTime] = useState(new Date());
     const [showMobileMenu, setShowMobileMenu] = useState(false);
 
@@ -72,7 +79,7 @@ export default function POSLayout({ children }) {
                     </button>
 
                     {/* Logo */}
-                    <Link href={route("dashboard")} className="flex items-center gap-2">
+                    <Link href={homeHref} className="flex items-center gap-2">
                         <div className="w-9 h-9 flex items-center justify-center overflow-hidden">
                             {storeProfile?.logo ? (
                                 <img
@@ -109,20 +116,24 @@ export default function POSLayout({ children }) {
                 <div className="flex items-center gap-2 lg:gap-3">
                     {/* Quick Actions */}
                     <nav className="hidden lg:flex items-center gap-1">
-                        <Link
-                            href={route("dashboard")}
-                            className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium text-slate-600 hover:text-slate-900 hover:bg-slate-100 dark:text-slate-400 dark:hover:text-white dark:hover:bg-slate-800 transition-colors"
-                        >
-                            <IconHome size={18} />
-                            <span>Dashboard</span>
-                        </Link>
-                        <Link
-                            href={route("transactions.history")}
-                            className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium text-slate-600 hover:text-slate-900 hover:bg-slate-100 dark:text-slate-400 dark:hover:text-white dark:hover:bg-slate-800 transition-colors"
-                        >
-                            <IconHistory size={18} />
-                            <span>Riwayat</span>
-                        </Link>
+                        {canDashboard && (
+                            <Link href={route("dashboard")} className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium text-slate-600 hover:text-slate-900 hover:bg-slate-100 dark:text-slate-400 dark:hover:text-white dark:hover:bg-slate-800 transition-colors">
+                                <IconHome size={18} />
+                                <span>Dashboard</span>
+                            </Link>
+                        )}
+                        {canManualHistory && (
+                            <Link href={route("transactions.history")} title="Riwayat transaksi yang diinput kasir secara manual" className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium text-slate-600 hover:text-slate-900 hover:bg-slate-100 dark:text-slate-400 dark:hover:text-white dark:hover:bg-slate-800 transition-colors">
+                                <IconHistory size={18} />
+                                <span>Riwayat Kasir (Manual)</span>
+                            </Link>
+                        )}
+                        {canBoothHistory && (
+                            <Link href={route("photobox-transactions.index")} title="Riwayat transaksi yang masuk otomatis dari booth photobox" className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium text-slate-600 hover:text-slate-900 hover:bg-slate-100 dark:text-slate-400 dark:hover:text-white dark:hover:bg-slate-800 transition-colors">
+                                <IconCamera size={18} />
+                                <span>Riwayat Booth</span>
+                            </Link>
+                        )}
                     </nav>
 
                     {/* Divider */}
@@ -197,22 +208,24 @@ export default function POSLayout({ children }) {
                         onClick={(e) => e.stopPropagation()}
                     >
                         <nav className="p-4 space-y-2">
-                            <Link
-                                href={route("dashboard")}
-                                className="flex items-center gap-3 px-4 py-3 rounded-xl text-slate-700 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800 transition-colors"
-                            >
-                                <IconHome size={20} />
-                                <span className="font-medium">Dashboard</span>
-                            </Link>
-                            <Link
-                                href={route("transactions.history")}
-                                className="flex items-center gap-3 px-4 py-3 rounded-xl text-slate-700 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800 transition-colors"
-                            >
-                                <IconHistory size={20} />
-                                <span className="font-medium">
-                                    Riwayat Transaksi
-                                </span>
-                            </Link>
+                            {canDashboard && (
+                                <Link href={route("dashboard")} className="flex items-center gap-3 px-4 py-3 rounded-xl text-slate-700 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800 transition-colors">
+                                    <IconHome size={20} />
+                                    <span className="font-medium">Dashboard</span>
+                                </Link>
+                            )}
+                            {canManualHistory && (
+                                <Link href={route("transactions.history")} className="flex items-center gap-3 px-4 py-3 rounded-xl text-slate-700 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800 transition-colors">
+                                    <IconHistory size={20} />
+                                    <span className="font-medium">Riwayat Kasir (Manual)</span>
+                                </Link>
+                            )}
+                            {canBoothHistory && (
+                                <Link href={route("photobox-transactions.index")} className="flex items-center gap-3 px-4 py-3 rounded-xl text-slate-700 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800 transition-colors">
+                                    <IconCamera size={20} />
+                                    <span className="font-medium">Riwayat Booth (Photobox)</span>
+                                </Link>
+                            )}
                             <Link
                                 href={route("profile.edit")}
                                 className="flex items-center gap-3 px-4 py-3 rounded-xl text-slate-700 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800 transition-colors"

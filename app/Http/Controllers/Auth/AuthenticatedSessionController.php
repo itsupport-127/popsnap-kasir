@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\Auth\LoginRequest;
 use App\Services\AuditLogService;
 use App\Support\BotGuard;
+use App\Support\HomeRoute;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -60,23 +61,7 @@ class AuthenticatedSessionController extends Controller
             return redirect()->route('verification.notice');
         }
 
-        $routePriority = [
-            'transactions-access' => 'transactions.index',
-            'receivables-access' => 'receivables.index',
-            'payables-access' => 'payables.index',
-            'customers-access' => 'customers.index',
-            'suppliers-access' => 'suppliers.index',
-            'reports-access' => 'reports.sales.index',
-            'dashboard-access' => 'dashboard',
-        ];
-
-        $defaultRoute = 'dashboard.access';
-        foreach ($routePriority as $permission => $routeName) {
-            if ($user && $user->can($permission)) {
-                $defaultRoute = $routeName;
-                break;
-            }
-        }
+        $defaultRoute = HomeRoute::routeName($user);
 
         return redirect()->intended(route($defaultRoute, absolute: false));
     }

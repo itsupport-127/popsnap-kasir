@@ -33,11 +33,8 @@ export default function VerifyEmail({ status, botGuard }) {
                                 href="/"
                                 className="inline-flex items-center gap-3 mb-6"
                             >
-                                <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-primary-500 to-primary-600 flex items-center justify-center">
-                                    <IconShoppingCart
-                                        size={24}
-                                        className="text-white"
-                                    />
+                                <div className="flex h-12 w-12 items-center justify-center overflow-hidden rounded-full bg-white shadow-sm ring-1 ring-slate-200 dark:ring-slate-700">
+                                    <img src="/assets/logo/LogoPopsnap.png" alt="Popsnap" className="h-[60%] w-[60%] object-contain" />
                                 </div>
                                 <span className="text-2xl font-bold text-slate-900 dark:text-white">
                                     Aplikasi Kasir
